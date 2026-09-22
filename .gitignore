@@ -38,6 +38,15 @@ Build/**/*
 
 # Local tool configuration
 .codex/
+**/.claude/
+**/.cursor/
+**/.antigravity/
+**/.narshamcp/
+**/.agents/
+**/.mcp.json
+**/AGENTS.md
+**/CLAUDE.md
+**/GEMINI.md
 
 # Logs, crash dumps, and other diagnostic output
 *.log
@@ -53,3 +62,4 @@ ehthumbs_vista.db
 Desktop.ini
 $RECYCLE.BIN/
 *.lnk
+.claude/settings.local.json

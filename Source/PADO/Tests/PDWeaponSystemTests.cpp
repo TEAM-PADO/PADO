@@ -1,0 +1,463 @@
+#if WITH_DEV_AUTOMATION_TESTS
+
+#include "Misc/AutomationTest.h"
+
+#include "Components/StaticMeshComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshSocket.h"
+#include "Engine/World.h"
+#include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
+#include "PADO/AbilitySystem/Definition/PDChannelActionDefinition.h"
+#include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/AbilitySystem/Struct/PDActionHookStruct.h"
+#include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
+#include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
+#include "PADO/Character/PDPlayerCharacter.h"
+#include "PADO/Item/Component/PDHeldItemComponent.h"
+#include "PADO/Item/Component/PDWeaponMagazineComponent.h"
+#include "PADO/Item/Definition/PDItemDefinition.h"
+#include "PADO/Item/Interface/PDReloadableItem.h"
+#include "PADO/Item/Fragment/PDConsumeMagazineAmmoFragment.h"
+#include "PADO/Item/Tag/PDItemGameplayTags.h"
+#include "PADO/Item/PDWorldItemActor.h"
+#include "TimerManager.h"
+#include "UObject/UObjectGlobals.h"
+
+namespace PDWeaponSystemTests
+{
+	UPDItemDefinition* MakeMagazineItemDefinition(
+		UObject* Outer,
+		int32 MagazineCapacity,
+		bool bAutomatic)
+	{
+		UPDItemDefinition* Weapon = NewObject<UPDItemDefinition>(Outer);
+		Weapon->ItemId = bAutomatic
+			? TAG_PD_Item_Id_Weapon_AssaultRifle
+			: TAG_PD_Item_Id_Weapon_SniperRifle;
+		Weapon->DisplayName = FText::FromString(
+			bAutomatic ? TEXT("Automation Assault Rifle") : TEXT("Automation Sniper Rifle"));
+		Weapon->Presentation.StaticMesh = NewObject<UStaticMesh>(Weapon);
+		Weapon->Presentation.bSimulatePhysicsInWorld = false;
+		Weapon->Magazine.bEnabled = true;
+		Weapon->Magazine.Capacity = MagazineCapacity;
+		Weapon->Magazine.ReloadDuration = 0.01f;
+
+		UPDAbilityDefinition* Action = bAutomatic
+			? static_cast<UPDAbilityDefinition*>(
+				NewObject<UPDChannelActionDefinition>(Weapon))
+			: static_cast<UPDAbilityDefinition*>(
+				NewObject<UPDSingleActionDefinition>(Weapon));
+		Action->ActionTargeting = NewObject<UPDSelfTargeting>(Action);
+		if (UPDChannelActionDefinition* Channel =
+			Cast<UPDChannelActionDefinition>(Action))
+		{
+			Channel->ExecutionMode = EPDChannelExecutionMode::FixedInterval;
+			Channel->PulseInterval = 0.1f;
+			Channel->bExecuteImmediately = true;
+		}
+
+		FPDActionHookStruct ConsumeHook;
+		ConsumeHook.HookTag = TAG_PD_ActionHook_OnExecuteStart;
+		ConsumeHook.Fragments.Add(
+			NewObject<UPDConsumeMagazineAmmoFragment>(Action));
+		Action->ActionHooks.Add(MoveTemp(ConsumeHook));
+		Weapon->UseAction = Action;
+		return Weapon;
+	}
+
+	UWorld* CreateTestWorld(FWorldContext*& OutWorldContext)
+	{
+		const FName WorldName = MakeUniqueObjectName(
+			nullptr,
+			UWorld::StaticClass(),
+			TEXT("PDWeaponTestWorld"),
+			EUniqueObjectNameOptions::GloballyUnique);
+		UWorld* World = UWorld::CreateWorld(
+			EWorldType::Game,
+			false,
+			WorldName,
+			GetTransientPackage());
+		OutWorldContext = World
+			? &GEngine->CreateNewWorldContext(EWorldType::Game)
+			: nullptr;
+		if (OutWorldContext)
+		{
+			OutWorldContext->SetCurrentWorld(World);
+		}
+		return World;
+	}
+
+	void DestroyTestWorld(UWorld* World)
+	{
+		if (!World)
+		{
+			return;
+		}
+		World->DestroyWorld(false);
+		GEngine->DestroyWorldContext(World);
+	}
+
+	bool ConfigureHolderSocket(APDPlayerCharacter* Holder)
+	{
+		if (!Holder)
+		{
+			return false;
+		}
+
+		UStaticMesh* HandMeshAsset = NewObject<UStaticMesh>(Holder);
+		UStaticMeshSocket* HandSocket = NewObject<UStaticMeshSocket>(HandMeshAsset);
+		HandSocket->SocketName = TEXT("HandItem");
+		HandMeshAsset->Sockets.Add(HandSocket);
+
+		UStaticMeshComponent* HandMesh = NewObject<UStaticMeshComponent>(Holder);
+		HandMesh->SetupAttachment(Holder->GetRootComponent());
+		HandMesh->SetStaticMesh(HandMeshAsset);
+		HandMesh->RegisterComponent();
+		return Holder->GetHeldItemComponent()->ConfigureAttachment(
+			HandMesh,
+			TEXT("HandItem"));
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDItemMagazineDefinitionValidationTest,
+	"PADO.Item.Magazine.Definition.Validation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FString Error;
+	UPDItemDefinition* Assault = MakeMagazineItemDefinition(
+		GetTransientPackage(),
+		30,
+		true);
+	UPDItemDefinition* Sniper = MakeMagazineItemDefinition(
+		GetTransientPackage(),
+		5,
+		false);
+
+	TestTrue(TEXT("30발 FixedInterval Assault Definition은 유효하다."),
+		Assault->Validate(Error));
+	TestTrue(TEXT("5발 Single Sniper Definition은 유효하다."),
+		Sniper->Validate(Error));
+
+	UPDItemDefinition* AssaultAsset = LoadObject<UPDItemDefinition>(
+		nullptr,
+		TEXT("/Game/PADO/Item/Definition/DA_Item_AssultRifle.DA_Item_AssultRifle"));
+	UPDItemDefinition* SniperAsset = LoadObject<UPDItemDefinition>(
+		nullptr,
+		TEXT("/Game/PADO/Item/Definition/DA_Item_SniperRifle.DA_Item_SniperRifle"));
+	if (TestNotNull(TEXT("기존 Assault Item DA를 로드한다."), AssaultAsset))
+	{
+		TestTrue(TEXT("실제 Assault Item DA가 유효하다."), AssaultAsset->Validate(Error));
+		TestEqual(TEXT("실제 Assault Item DA 탄창은 30발이다."),
+			AssaultAsset->Magazine.Capacity, 30);
+	}
+	if (TestNotNull(TEXT("Sniper Item DA를 로드한다."), SniperAsset))
+	{
+		TestTrue(TEXT("실제 Sniper Item DA가 유효하다."), SniperAsset->Validate(Error));
+		TestEqual(TEXT("실제 Sniper Item DA 탄창은 5발이다."),
+			SniperAsset->Magazine.Capacity, 5);
+	}
+
+	Sniper->Magazine.Capacity = 0;
+	TestFalse(TEXT("0발 탄창은 거부한다."), Sniper->Validate(Error));
+	Sniper->Magazine.Capacity = 5;
+	// 탄약 소비 Fragment 배치는 제작자 재량이다. 없으면 탄약을 소비하지 않을
+	// 뿐 게임은 동작하므로 Definition 검증에서 막지 않는다.
+	Sniper->UseAction->ActionHooks.Reset();
+	TestTrue(
+		TEXT("탄약 소비 Fragment가 없어도 Magazine Item Definition은 유효하다."),
+		Sniper->Validate(Error));
+	Sniper->Magazine.bEnabled = false;
+	TestTrue(TEXT("탄창이 비활성화된 일반 아이템은 같은 Definition으로 유효하다."),
+		Sniper->Validate(Error));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDWeaponMagazineLifecycleTest,
+	"PADO.Item.Weapon.Magazine.Lifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDWeaponMagazineLifecycleTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("Weapon 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
+		TestNotNull(TEXT("Weapon을 스폰한다."), Weapon))
+	{
+		Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
+		TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder));
+
+		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Weapon, 5, false);
+		TestTrue(TEXT("Weapon을 5발 탄창으로 초기화한다."),
+			Weapon->InitializeItem(Definition));
+		UPDWeaponMagazineComponent* Magazine = Weapon->GetMagazineComponent();
+		TestNotNull(TEXT("Weapon에 Magazine Component가 있다."), Magazine);
+		TestEqual(TEXT("초기 탄창은 가득 차 있다."),
+			Magazine->GetCurrentMagazineAmmo(), 5);
+
+		for (int32 ShotIndex = 0; ShotIndex < 5; ++ShotIndex)
+		{
+			TestTrue(TEXT("남은 탄약이 있으면 한 발을 소비한다."),
+				Magazine->TryConsumeRound());
+		}
+		TestEqual(TEXT("5발 소비 후 탄창은 비어 있다."),
+			Magazine->GetCurrentMagazineAmmo(), 0);
+		TestFalse(TEXT("빈 탄창에서는 추가 소비할 수 없다."),
+			Magazine->TryConsumeRound());
+
+		Weapon->DispatchBeginPlay();
+		TestTrue(TEXT("Holder가 Weapon을 줍는다."),
+			Holder->GetHeldItemComponent()->TryPickUp(Weapon));
+		TestTrue(TEXT("빈 탄창에서 재장전을 시작한다."),
+			Magazine->TryStartReload());
+		TestTrue(TEXT("재장전 상태가 활성화된다."), Magazine->IsReloading());
+
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.02f);
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.02f);
+		TestFalse(TEXT("재장전 타이머 완료 후 상태를 해제한다."),
+			Magazine->IsReloading());
+		TestEqual(TEXT("재장전 완료 시 탄창을 최대치로 채운다."),
+			Magazine->GetCurrentMagazineAmmo(), 5);
+
+		TestTrue(TEXT("재장전 검증을 위해 한 발 소비한다."),
+			Magazine->TryConsumeRound());
+		TestTrue(TEXT("부분 탄창에서 재장전을 시작한다."),
+			Magazine->TryStartReload());
+		TestTrue(TEXT("재장전 중 Weapon을 드롭한다."),
+			Holder->GetHeldItemComponent()->DropHeldItem(FTransform::Identity));
+		TestFalse(TEXT("드롭 시 재장전을 취소한다."), Magazine->IsReloading());
+		TestEqual(TEXT("드롭해도 부분 탄창을 보존한다."),
+			Magazine->GetCurrentMagazineAmmo(), 4);
+
+		UPDItemDefinition* PlainItem = NewObject<UPDItemDefinition>(Weapon);
+		PlainItem->ItemId = Definition->ItemId;
+		PlainItem->DisplayName = FText::FromString(TEXT("Automation Plain Item"));
+		PlainItem->Presentation = Definition->Presentation;
+		TestTrue(TEXT("같은 Actor를 일반 아이템 Definition으로 전환한다."),
+			Weapon->InitializeItem(PlainItem));
+		TestNull(TEXT("일반 아이템은 활성 Magazine을 제공하지 않는다."),
+			Weapon->GetMagazineComponent());
+		TestTrue(TEXT("전환된 일반 아이템을 줍는다."),
+			Holder->GetHeldItemComponent()->TryPickUp(Weapon));
+		TestFalse(TEXT("일반 아이템은 재장전 요청을 거부한다."),
+			IPDReloadableItem::Execute_TryStartReload(Weapon, Holder));
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDWeaponInputFiringTest,
+	"PADO.Item.Weapon.Input.FiringModes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDWeaponInputFiringTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("발사 입력 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
+	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	UPDHeldItemComponent* HeldItems = Holder->GetHeldItemComponent();
+
+	APDWorldItemActor* Assault = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Assault Weapon을 스폰한다."), Assault))
+	{
+		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Assault, 2, true);
+		TestTrue(TEXT("연사 무기를 초기화한다."), Assault->InitializeItem(Definition));
+		Assault->DispatchBeginPlay();
+		TestTrue(TEXT("연사 무기를 줍는다."), HeldItems->TryPickUp(Assault));
+		UPDWeaponMagazineComponent* Magazine = Assault->GetMagazineComponent();
+		TestTrue(TEXT("연사 입력을 누른다."), HeldItems->PressHeldItemUse());
+		TestEqual(TEXT("Press 직후 첫 발을 소비한다."),
+			Magazine->GetCurrentMagazineAmmo(), 1);
+
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.11f);
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.11f);
+		TestEqual(TEXT("누름 유지 시 두 번째 발을 소비한다."),
+			Magazine->GetCurrentMagazineAmmo(), 0);
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.11f);
+		TestEqual(TEXT("빈 탄창에서는 추가 연사하지 않는다."),
+			Magazine->GetCurrentMagazineAmmo(), 0);
+		HeldItems->ReleaseHeldItemUse();
+		TestTrue(TEXT("연사 무기를 드롭한다."),
+			HeldItems->DropHeldItem(FTransform::Identity));
+	}
+
+	APDWorldItemActor* Sniper = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Sniper Weapon을 스폰한다."), Sniper))
+	{
+		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Sniper, 5, false);
+		TestTrue(TEXT("단발 무기를 초기화한다."), Sniper->InitializeItem(Definition));
+		Sniper->DispatchBeginPlay();
+		TestTrue(TEXT("단발 무기를 줍는다."), HeldItems->TryPickUp(Sniper));
+		UPDWeaponMagazineComponent* Magazine = Sniper->GetMagazineComponent();
+		TestTrue(TEXT("단발 입력을 누른다."), HeldItems->PressHeldItemUse());
+		TestEqual(TEXT("Press 한 번에 한 발만 소비한다."),
+			Magazine->GetCurrentMagazineAmmo(), 4);
+		++GFrameCounter;
+		TestWorld->GetTimerManager().Tick(0.25f);
+		TestEqual(TEXT("누름 유지 중 추가 발사는 없다."),
+			Magazine->GetCurrentMagazineAmmo(), 4);
+		HeldItems->ReleaseHeldItemUse();
+		TestTrue(TEXT("두 번째 단발 입력을 누른다."),
+			HeldItems->PressHeldItemUse());
+		TestEqual(TEXT("두 번째 Press에서 한 발을 소비한다."),
+			Magazine->GetCurrentMagazineAmmo(), 3);
+		HeldItems->ReleaseHeldItemUse();
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDItemInteractionInputTest,
+	"PADO.Item.Interaction.PickUpAndDrop",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDItemInteractionInputTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("상호작용 입력 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
+	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	UPDHeldItemComponent* HeldItems = Holder->GetHeldItemComponent();
+	APDWorldItemActor* Item = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (!TestNotNull(TEXT("World Item을 스폰한다."), Item))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	TestTrue(TEXT("아이템을 초기화한다."),
+		Item->InitializeItem(MakeMagazineItemDefinition(Item, 5, false)));
+	Item->DispatchBeginPlay();
+
+	// 서버 권한에서는 RequestPickUp이 곧바로 TryPickUp으로 확정된다.
+	TestTrue(TEXT("상호작용 요청으로 아이템을 줍는다."),
+		HeldItems->RequestPickUp(Item));
+	TestTrue(TEXT("줍기 후 Held Item이 일치한다."),
+		HeldItems->GetHeldItem() == Item);
+	TestTrue(TEXT("아이템 상태가 Held로 바뀐다."),
+		Item->GetItemState() == EPDWorldItemState::Held);
+	TestTrue(TEXT("아이템 Holder가 캐릭터다."),
+		Item->GetHolder() == Holder);
+
+	APDWorldItemActor* Second = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("두 번째 World Item을 스폰한다."), Second))
+	{
+		TestTrue(TEXT("두 번째 아이템을 초기화한다."),
+			Second->InitializeItem(MakeMagazineItemDefinition(Second, 5, false)));
+		Second->DispatchBeginPlay();
+
+		// 이미 들고 있으면 상호작용 입력은 아무것도 바꾸지 않는다.
+		Holder->Interact();
+		TestTrue(TEXT("보유 중 상호작용 입력이 아이템을 교체하지 않는다."),
+			HeldItems->GetHeldItem() == Item);
+		TestFalse(TEXT("보유 중에는 다른 아이템 줍기를 거부한다."),
+			HeldItems->RequestPickUp(Second));
+		TestTrue(TEXT("거부된 대상은 World 상태로 남는다."),
+			Second->GetItemState() == EPDWorldItemState::World);
+
+		// 근접 후보 선택 검사에 끼어들지 않게 치운다. 이 아이템은 Holder와
+		// 같은 지점에 스폰돼 있어서 두면 언제나 가장 가까운 후보가 된다.
+		Second->Destroy();
+	}
+
+	// 드롭 입력 경로다.
+	Holder->DropHeldItem();
+	TestNull(TEXT("드롭 후 Held Item이 비워진다."), HeldItems->GetHeldItem());
+	TestTrue(TEXT("드롭한 아이템이 World 상태로 돌아간다."),
+		Item->GetItemState() == EPDWorldItemState::World);
+	TestNull(TEXT("드롭한 아이템의 Holder가 해제된다."), Item->GetHolder());
+
+	// 내려놓은 위치는 줍기 반경 안이므로 다시 집을 수 있다.
+	TestTrue(TEXT("드롭 후 다시 주울 수 있다."), HeldItems->RequestPickUp(Item));
+	Holder->DropHeldItem();
+
+	// 드롭한 아이템은 캐릭터보다 낮은 바닥에 놓인다. 시선 Sweep이 수평이면
+	// 스쳐 지나가므로 근접 후보 선택이 이 경우를 받아 줘야 한다.
+	Item->SetActorLocation(
+		Holder->GetActorLocation() + FVector(120.0f, 0.0f, -76.0f));
+	TestTrue(TEXT("바닥 높이의 드롭 아이템을 근접 후보로 고른다."),
+		Holder->FindNearestPickupCandidate() == Item);
+	TestTrue(TEXT("상호작용 대상 탐색이 같은 아이템을 돌려준다."),
+		Holder->FindInteractTarget() == Item);
+
+	// 여러 후보가 있으면 가장 가까운 것을 고른다.
+	APDWorldItemActor* Farther = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("두 번째 후보를 스폰한다."), Farther))
+	{
+		TestTrue(TEXT("두 번째 후보를 초기화한다."),
+			Farther->InitializeItem(MakeMagazineItemDefinition(Farther, 5, false)));
+		Farther->DispatchBeginPlay();
+		Farther->SetActorLocation(
+			Holder->GetActorLocation() + FVector(200.0f, 0.0f, -76.0f));
+		TestTrue(TEXT("가까운 쪽 후보를 고른다."),
+			Holder->FindNearestPickupCandidate() == Item);
+		Farther->Destroy();
+	}
+
+	// 줍기 반경 밖으로 굴러간 아이템은 후보에서 빠진다.
+	Item->SetActorLocation(
+		Holder->GetActorLocation() +
+		FVector(HeldItems->GetMaxPickupDistance() + 100.0f, 0.0f, -76.0f));
+	TestNull(TEXT("줍기 반경 밖 아이템은 고르지 않는다."),
+		Holder->FindNearestPickupCandidate());
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+#endif
