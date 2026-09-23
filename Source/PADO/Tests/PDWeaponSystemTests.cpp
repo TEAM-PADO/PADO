@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
@@ -455,6 +456,119 @@ bool FPDItemInteractionInputTest::RunTest(const FString& Parameters)
 		FVector(HeldItems->GetMaxPickupDistance() + 100.0f, 0.0f, -76.0f));
 	TestNull(TEXT("줍기 반경 밖 아이템은 고르지 않는다."),
 		Holder->FindNearestPickupCandidate());
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDAimStateTransitionTest,
+	"PADO.Character.Aim.StateTransitions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDAimStateTransitionTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("조준 단계 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
+	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	// 기본값에서는 무기가 없으면 어떤 단계로도 올라가지 못한다.
+	TestFalse(TEXT("맨손에서는 조준 조건을 만족하지 않는다."),
+		Holder->CanEnterAimState());
+	Holder->StartShouldering();
+	TestTrue(TEXT("맨손 견착 입력은 Idle을 유지한다."),
+		Holder->GetAimState() == EPDAimState::Idle);
+	Holder->ToggleAiming();
+	TestTrue(TEXT("맨손 조준 토글은 Idle을 유지한다."),
+		Holder->GetAimState() == EPDAimState::Idle);
+
+	UPDHeldItemComponent* HeldItems = Holder->GetHeldItemComponent();
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (!TestNotNull(TEXT("무기를 스폰한다."), Weapon))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+	TestTrue(TEXT("무기를 초기화한다."),
+		Weapon->InitializeItem(MakeMagazineItemDefinition(Weapon, 5, false)));
+	Weapon->DispatchBeginPlay();
+	TestTrue(TEXT("무기를 든다."), HeldItems->RequestPickUp(Weapon));
+
+	// Idle -> 견착 -> Idle
+	Holder->StartShouldering();
+	TestTrue(TEXT("누르고 있으면 견착으로 간다."),
+		Holder->GetAimState() == EPDAimState::Shouldered);
+	Holder->StartShouldering();
+	TestTrue(TEXT("견착 진입은 여러 번 호출해도 같다."),
+		Holder->GetAimState() == EPDAimState::Shouldered);
+	Holder->StopShouldering();
+	TestTrue(TEXT("떼면 Idle로 돌아온다."),
+		Holder->GetAimState() == EPDAimState::Idle);
+
+	// Idle -> 조준 -> Idle
+	Holder->ToggleAiming();
+	TestTrue(TEXT("짧게 누르면 조준으로 간다."),
+		Holder->GetAimState() == EPDAimState::Aiming);
+	Holder->ToggleAiming();
+	TestTrue(TEXT("다시 짧게 누르면 Idle로 간다."),
+		Holder->GetAimState() == EPDAimState::Idle);
+
+	// 조준 중 꾹 누르면 견착으로 내려오고, 떼면 Idle로 간다.
+	Holder->ToggleAiming();
+	TestTrue(TEXT("조준을 켠다."),
+		Holder->GetAimState() == EPDAimState::Aiming);
+	Holder->StartShouldering();
+	TestTrue(TEXT("조준 중 누르고 있으면 견착으로 내려온다."),
+		Holder->GetAimState() == EPDAimState::Shouldered);
+	Holder->StopShouldering();
+	TestTrue(TEXT("떼면 Idle로 간다."),
+		Holder->GetAimState() == EPDAimState::Idle);
+
+	// 토글로 켠 조준은 입력을 떼도 유지한다.
+	Holder->ToggleAiming();
+	Holder->StopShouldering();
+	TestTrue(TEXT("조준은 Hold 해제로 풀리지 않는다."),
+		Holder->GetAimState() == EPDAimState::Aiming);
+
+	// 카메라가 목표 배치로 수렴한다.
+	USpringArmComponent* CameraBoom = Holder->GetCameraBoom();
+	if (TestNotNull(TEXT("Camera Boom을 얻는다."), CameraBoom))
+	{
+		const float StartArmLength = CameraBoom->TargetArmLength;
+		Holder->SetAimState(EPDAimState::Shouldered);
+		for (int32 Step = 0; Step < 120; ++Step)
+		{
+			Holder->Tick(1.0f / 60.0f);
+		}
+		TestTrue(TEXT("견착에서 팔 길이가 줄어든다."),
+			CameraBoom->TargetArmLength < StartArmLength);
+		TestTrue(TEXT("견착에서 카메라가 옆으로 치우친다."),
+			!CameraBoom->SocketOffset.IsNearlyZero());
+	}
+
+	// 무기를 잃으면 다음 Tick에서 Idle로 내려간다.
+	Holder->SetAimState(EPDAimState::Aiming);
+	Holder->DropHeldItem();
+	Holder->Tick(1.0f / 60.0f);
+	TestTrue(TEXT("무기를 잃으면 Idle로 돌아온다."),
+		Holder->GetAimState() == EPDAimState::Idle);
 
 	DestroyTestWorld(TestWorld);
 	return true;

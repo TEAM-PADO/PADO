@@ -15,6 +15,48 @@ class UPDAbilitySystemComponent;
 class UPDHeldItemComponent;
 class UPDKnockbackComponent;
 
+/** 조준 단계다. 카메라가 이 값을 따르고, 이후 애니메이션과 탄퍼짐도 여기에 붙는다. */
+UENUM(BlueprintType)
+enum class EPDAimState : uint8
+{
+	/** 평상시 3인칭 시점이다. */
+	Idle,
+	/** 견착이다. 조준 입력을 누르고 있는 동안 유지한다. */
+	Shouldered,
+	/** 조준이다. 조준 입력을 짧게 눌러 켜고 끈다. */
+	Aiming
+};
+
+/** 조준 단계별 카메라 배치다. */
+USTRUCT(BlueprintType)
+struct PADO_API FPDAimCameraPose
+{
+	GENERATED_BODY()
+
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "Aim",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float ArmLength = 400.0f;
+
+	/** Spring Arm 기준 오프셋이다. Y가 오른쪽, Z가 위다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Aim")
+	FVector SocketOffset = FVector::ZeroVector;
+
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "Aim",
+		meta = (ClampMin = "5.0", ClampMax = "170.0"))
+	float FieldOfView = 90.0f;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FPDAimStateChangedSignature,
+	EPDAimState,
+	NewAimState);
+
 /**
  * Base third-person player character.
  *
@@ -30,6 +72,7 @@ class PADO_API APDPlayerCharacter
 
 public:
 	APDPlayerCharacter();
+	virtual void Tick(float DeltaSeconds) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 	/** Applies camera-relative movement input. X is right and Y is forward. */
@@ -80,6 +123,32 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Interaction")
 	APDWorldItemActor* FindNearestPickupCandidate() const;
 
+	/** 조준 입력을 누르고 있는 동안 견착으로 들어간다. 조준 중이었다면 견착으로 내려온다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
+	void StartShouldering();
+
+	/** 조준 입력을 떼면 평상시 시점으로 돌아간다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
+	void StopShouldering();
+
+	/** 조준 입력을 짧게 눌렀을 때 조준을 켜고 끈다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
+	void ToggleAiming();
+
+	UFUNCTION(BlueprintCallable, Category = "PADO|Aim")
+	void SetAimState(EPDAimState NewAimState);
+
+	UFUNCTION(BlueprintPure, Category = "PADO|Aim")
+	EPDAimState GetAimState() const { return AimState; }
+
+	/** 조준 조건을 만족하는지 본다. 기본값에서는 아이템을 들고 있어야 한다. */
+	UFUNCTION(BlueprintPure, Category = "PADO|Aim")
+	bool CanEnterAimState() const;
+
+	/** 단계가 실제로 바뀔 때만 알린다. AnimBP가 여기에 붙는다. */
+	UPROPERTY(BlueprintAssignable, Category = "PADO|Aim")
+	FPDAimStateChangedSignature OnAimStateChanged;
+
 	/** Extension point for the combat system that will be added later. */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "PADO|Input")
 	void Attack();
@@ -123,6 +192,8 @@ protected:
 
 private:
 	void InitializeAbilityActorInfo();
+	const FPDAimCameraPose& GetAimCameraPose(EPDAimState State) const;
+	void UpdateAimCamera(float DeltaSeconds);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -157,4 +228,28 @@ private:
 		Category = "PADO|Interaction",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
 	float InteractTraceDistance = 900.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
+	FPDAimCameraPose IdleCameraPose;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
+	FPDAimCameraPose ShoulderedCameraPose;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
+	FPDAimCameraPose AimingCameraPose;
+
+	/** 클수록 단계 전환이 빠르다. 12면 0.2~0.3초 정도에 넘어간다. */
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "PADO|Aim",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.1"))
+	float AimCameraInterpSpeed = 12.0f;
+
+	/** 끄면 맨손으로도 견착·조준할 수 있다. 카메라만 확인할 때 쓴다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
+	bool bRequireHeldItemToAim = true;
+
+	/** 로컬 시점 상태다. 복제하지 않는다. 카메라는 보는 사람에게만 의미가 있다. */
+	EPDAimState AimState = EPDAimState::Idle;
 };

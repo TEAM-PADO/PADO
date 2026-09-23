@@ -66,6 +66,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Input")
 	UInputAction* GetDropAction() const { return DropAction; }
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Input")
+	UInputAction* GetAimHoldAction() const { return AimHoldAction; }
+
+	UFUNCTION(BlueprintPure, Category = "PADO|Input")
+	UInputAction* GetAimToggleAction() const { return AimToggleAction; }
+
 protected:
 	virtual void SetupInputComponent() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -91,6 +97,9 @@ private:
 	void HandleAttackCompleted();
 	void HandleReload();
 	void HandleDrop();
+	void HandleAimHoldTriggered();
+	void HandleAimHoldCompleted();
+	void HandleAimToggle();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -119,6 +128,14 @@ private:
 	/** 선택 입력이다. 비워 두면 드롭 조작을 바인딩하지 않고 나머지 입력은 정상 동작한다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> DropAction;
+
+	/** 선택 입력이다. Hold 트리거를 붙여 견착에 사용한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> AimHoldAction;
+
+	/** 선택 입력이다. Tap 트리거를 붙여 조준 토글에 사용한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> AimToggleAction;
 
 	bool bDefaultMappingContextAdded = false;
 };

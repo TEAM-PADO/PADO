@@ -47,10 +47,23 @@ void APDPlayerController::SetupInputComponent()
 	EnhancedInputComponent->BindAction(AttackAction, ETriggerEvent::Canceled, this, &ThisClass::HandleAttackCompleted);
 	EnhancedInputComponent->BindAction(ReloadAction, ETriggerEvent::Started, this, &ThisClass::HandleReload);
 
-	// Drop은 선택 입력이다. 에셋을 지정하지 않으면 바인딩만 건너뛴다.
+	// Drop과 조준은 선택 입력이다. 에셋을 지정하지 않으면 바인딩만 건너뛴다.
 	if (DropAction)
 	{
 		EnhancedInputComponent->BindAction(DropAction, ETriggerEvent::Started, this, &ThisClass::HandleDrop);
+	}
+
+	if (AimHoldAction)
+	{
+		// Hold 트리거는 임계 시간을 넘긴 뒤부터 Triggered를 반복한다. 진입은 멱등이다.
+		EnhancedInputComponent->BindAction(AimHoldAction, ETriggerEvent::Triggered, this, &ThisClass::HandleAimHoldTriggered);
+		EnhancedInputComponent->BindAction(AimHoldAction, ETriggerEvent::Completed, this, &ThisClass::HandleAimHoldCompleted);
+		EnhancedInputComponent->BindAction(AimHoldAction, ETriggerEvent::Canceled, this, &ThisClass::HandleAimHoldCompleted);
+	}
+
+	if (AimToggleAction)
+	{
+		EnhancedInputComponent->BindAction(AimToggleAction, ETriggerEvent::Triggered, this, &ThisClass::HandleAimToggle);
 	}
 }
 
@@ -200,5 +213,29 @@ void APDPlayerController::HandleDrop()
 	if (APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter())
 	{
 		ControlledCharacter->DropHeldItem();
+	}
+}
+
+void APDPlayerController::HandleAimHoldTriggered()
+{
+	if (APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter())
+	{
+		ControlledCharacter->StartShouldering();
+	}
+}
+
+void APDPlayerController::HandleAimHoldCompleted()
+{
+	if (APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter())
+	{
+		ControlledCharacter->StopShouldering();
+	}
+}
+
+void APDPlayerController::HandleAimToggle()
+{
+	if (APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter())
+	{
+		ControlledCharacter->ToggleAiming();
 	}
 }

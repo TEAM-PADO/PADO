@@ -26,6 +26,17 @@ namespace PDCharacterDefaults
 	constexpr float BrakingDecelerationWalking = 2000.0f;
 	constexpr float BrakingDecelerationFalling = 1500.0f;
 	constexpr float CameraBoomLength = 400.0f;
+
+	constexpr float IdleFieldOfView = 90.0f;
+	constexpr float ShoulderedArmLength = 160.0f;
+	constexpr float ShoulderedFieldOfView = 85.0f;
+	constexpr float AimingArmLength = 110.0f;
+	constexpr float AimingFieldOfView = 60.0f;
+	const FVector ShoulderedSocketOffset(0.0f, 60.0f, 50.0f);
+	const FVector AimingSocketOffset(0.0f, 45.0f, 45.0f);
+
+	/** 보간 종료 판정 허용 오차다. */
+	constexpr float CameraSettleTolerance = 0.1f;
 }
 
 APDPlayerCharacter::APDPlayerCharacter()
@@ -48,14 +59,28 @@ APDPlayerCharacter::APDPlayerCharacter()
 	MovementComponent->BrakingDecelerationWalking = PDCharacterDefaults::BrakingDecelerationWalking;
 	MovementComponent->BrakingDecelerationFalling = PDCharacterDefaults::BrakingDecelerationFalling;
 
+	IdleCameraPose.ArmLength = PDCharacterDefaults::CameraBoomLength;
+	IdleCameraPose.SocketOffset = FVector::ZeroVector;
+	IdleCameraPose.FieldOfView = PDCharacterDefaults::IdleFieldOfView;
+
+	ShoulderedCameraPose.ArmLength = PDCharacterDefaults::ShoulderedArmLength;
+	ShoulderedCameraPose.SocketOffset = PDCharacterDefaults::ShoulderedSocketOffset;
+	ShoulderedCameraPose.FieldOfView = PDCharacterDefaults::ShoulderedFieldOfView;
+
+	AimingCameraPose.ArmLength = PDCharacterDefaults::AimingArmLength;
+	AimingCameraPose.SocketOffset = PDCharacterDefaults::AimingSocketOffset;
+	AimingCameraPose.FieldOfView = PDCharacterDefaults::AimingFieldOfView;
+
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = PDCharacterDefaults::CameraBoomLength;
+	CameraBoom->TargetArmLength = IdleCameraPose.ArmLength;
+	CameraBoom->SocketOffset = IdleCameraPose.SocketOffset;
 	CameraBoom->bUsePawnControlRotation = true;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+	FollowCamera->SetFieldOfView(IdleCameraPose.FieldOfView);
 
 	AbilitySystemComponent =
 		CreateDefaultSubobject<UPDAbilitySystemComponent>(TEXT("AbilitySystem"));
@@ -77,6 +102,19 @@ void APDPlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializeAbilityActorInfo();
+}
+
+void APDPlayerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// 조준 중 무기를 잃으면 단계를 유지할 근거가 없다. 드롭·파괴 모두 여기로 모인다.
+	if (AimState != EPDAimState::Idle && !CanEnterAimState())
+	{
+		SetAimState(EPDAimState::Idle);
+	}
+
+	UpdateAimCamera(DeltaSeconds);
 }
 
 void APDPlayerCharacter::PossessedBy(AController* NewController)
@@ -284,4 +322,108 @@ void APDPlayerCharacter::StopAttacking()
 bool APDPlayerCharacter::ReloadHeldItem()
 {
 	return HeldItemComponent && HeldItemComponent->TryReloadHeldItem();
+}
+
+void APDPlayerCharacter::StartShouldering()
+{
+	// 조준 중에 다시 누르고 있으면 견착으로 내려온다. 떼면 Idle로 간다.
+	SetAimState(EPDAimState::Shouldered);
+}
+
+void APDPlayerCharacter::StopShouldering()
+{
+	// 토글로 켠 조준은 입력을 떼도 유지한다.
+	if (AimState == EPDAimState::Shouldered)
+	{
+		SetAimState(EPDAimState::Idle);
+	}
+}
+
+void APDPlayerCharacter::ToggleAiming()
+{
+	SetAimState(
+		AimState == EPDAimState::Aiming
+			? EPDAimState::Idle
+			: EPDAimState::Aiming);
+}
+
+void APDPlayerCharacter::SetAimState(EPDAimState NewAimState)
+{
+	if (NewAimState != EPDAimState::Idle && !CanEnterAimState())
+	{
+		NewAimState = EPDAimState::Idle;
+	}
+
+	if (AimState == NewAimState)
+	{
+		return;
+	}
+
+	AimState = NewAimState;
+	OnAimStateChanged.Broadcast(AimState);
+}
+
+bool APDPlayerCharacter::CanEnterAimState() const
+{
+	return !bRequireHeldItemToAim ||
+		(HeldItemComponent && HeldItemComponent->HasHeldItem());
+}
+
+const FPDAimCameraPose& APDPlayerCharacter::GetAimCameraPose(
+	EPDAimState State) const
+{
+	switch (State)
+	{
+	case EPDAimState::Shouldered:
+		return ShoulderedCameraPose;
+
+	case EPDAimState::Aiming:
+		return AimingCameraPose;
+
+	case EPDAimState::Idle:
+	default:
+		return IdleCameraPose;
+	}
+}
+
+void APDPlayerCharacter::UpdateAimCamera(float DeltaSeconds)
+{
+	if (!CameraBoom || !FollowCamera)
+	{
+		return;
+	}
+
+	const FPDAimCameraPose& TargetPose = GetAimCameraPose(AimState);
+
+	// 목표에 도달했으면 매 프레임 계산하지 않는다.
+	if (FMath::IsNearlyEqual(
+			CameraBoom->TargetArmLength,
+			TargetPose.ArmLength,
+			PDCharacterDefaults::CameraSettleTolerance) &&
+		CameraBoom->SocketOffset.Equals(
+			TargetPose.SocketOffset,
+			PDCharacterDefaults::CameraSettleTolerance) &&
+		FMath::IsNearlyEqual(
+			FollowCamera->FieldOfView,
+			TargetPose.FieldOfView,
+			PDCharacterDefaults::CameraSettleTolerance))
+	{
+		return;
+	}
+
+	CameraBoom->TargetArmLength = FMath::FInterpTo(
+		CameraBoom->TargetArmLength,
+		TargetPose.ArmLength,
+		DeltaSeconds,
+		AimCameraInterpSpeed);
+	CameraBoom->SocketOffset = FMath::VInterpTo(
+		CameraBoom->SocketOffset,
+		TargetPose.SocketOffset,
+		DeltaSeconds,
+		AimCameraInterpSpeed);
+	FollowCamera->SetFieldOfView(FMath::FInterpTo(
+		FollowCamera->FieldOfView,
+		TargetPose.FieldOfView,
+		DeltaSeconds,
+		AimCameraInterpSpeed));
 }
