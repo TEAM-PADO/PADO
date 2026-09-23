@@ -42,6 +42,8 @@ Build/**/*
 **/.cursor/
 **/.antigravity/
 **/.narshamcp/
+# 로컬 개발 도구. 100MB 초과 파일이 있어 Git으로 배포하지 않는다.
+/Plugins/NarshaMCP/
 **/.agents/
 **/.mcp.json
 **/AGENTS.md

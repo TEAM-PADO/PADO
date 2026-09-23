@@ -74,6 +74,11 @@ void UPDAnimInstance::RefreshAim()
 		OwningCharacter->GetActorRotation()).GetNormalized();
 	AimPitch = AimDelta.Pitch;
 	AimYaw = AimDelta.Yaw;
+
+	// 0으로 나누면 NaN이 그대로 포즈까지 전파된다.
+	const float SafeRange = FMath::Max(AimAngleRange, UE_KINDA_SMALL_NUMBER);
+	AimPitchNormalized = FMath::Clamp(AimPitch / SafeRange, -1.0f, 1.0f);
+	AimYawNormalized = FMath::Clamp(AimYaw / SafeRange, -1.0f, 1.0f);
 }
 
 void UPDAnimInstance::RefreshHeldItem()

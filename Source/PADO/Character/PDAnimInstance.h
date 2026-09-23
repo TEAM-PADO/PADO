@@ -79,13 +79,39 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "PD|Aim")
 	EPDAimState AimState = EPDAimState::Idle;
 
-	/** Aim Offset용 상하 조준각이다. */
+	/** 상하 조준각이다. 도 단위. */
 	UPROPERTY(BlueprintReadOnly, Category = "PD|Aim")
 	float AimPitch = 0.0f;
 
-	/** 캐릭터가 컨트롤 회전을 따르므로 평소 0에 가깝다. */
+	/** 캐릭터가 컨트롤 회전을 따르므로 평소 0에 가깝다. 도 단위. */
 	UPROPERTY(BlueprintReadOnly, Category = "PD|Aim")
 	float AimYaw = 0.0f;
+
+	/**
+	 * Aim Offset BlendSpace에 연결할 정규화 조준각이다. -1 ~ 1.
+	 *
+	 * UE 기본 AO 에셋(AO_Rifle, AO_Pistol)은 축 범위가 -1~1이라 도 단위를
+	 * 그대로 넣으면 1도만 움직여도 끝으로 붙는다. AO 노드에는 이 값을 쓴다.
+	 * 축이 도 단위인 AO를 쓸 때만 위의 AimPitch/AimYaw를 직접 연결한다.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "PD|Aim")
+	float AimPitchNormalized = 0.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PD|Aim")
+	float AimYawNormalized = 0.0f;
+
+	/**
+	 * 정규화 기준 각도다. 이 각도에서 정규화 값이 ±1이 된다.
+	 *
+	 * 작게 잡으면 조준 반응이 또렷해지지만 그 이상 각도에서 포즈가 멈춘다.
+	 * 크게 잡으면 전 범위를 쓰는 대신 샘플 사이가 늘어나 뭉개져 보인다.
+	 */
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "PD|Aim",
+		meta = (ClampMin = "1.0", ClampMax = "180.0", Units = "deg"))
+	float AimAngleRange = 90.0f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PD|Item")
 	bool bHasHeldItem = false;
