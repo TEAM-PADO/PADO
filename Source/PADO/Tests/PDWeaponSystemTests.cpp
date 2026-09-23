@@ -149,7 +149,7 @@ bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
 
 	UPDItemDefinition* AssaultAsset = LoadObject<UPDItemDefinition>(
 		nullptr,
-		TEXT("/Game/PADO/Item/Definition/DA_Item_AssultRifle.DA_Item_AssultRifle"));
+		TEXT("/Game/PADO/Item/Definition/DA_Item_AssaultRifle.DA_Item_AssaultRifle"));
 	UPDItemDefinition* SniperAsset = LoadObject<UPDItemDefinition>(
 		nullptr,
 		TEXT("/Game/PADO/Item/Definition/DA_Item_SniperRifle.DA_Item_SniperRifle"));
