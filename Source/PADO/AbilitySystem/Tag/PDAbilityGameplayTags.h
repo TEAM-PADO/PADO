@@ -15,3 +15,6 @@ PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Ability_Action);
 
 /** 공용 Action 쿨다운 GE가 지속시간을 받는 SetByCaller 태그다. */
 PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Data_Cooldown_Duration);
+
+/** 이동 속도 배율 GE가 배율을 받는 SetByCaller 태그다. */
+PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Data_MoveSpeed_Multiplier);

@@ -4,6 +4,9 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
+#include "PADO/AbilitySystem/Effect/PDGE_MoveSpeedMultiplier.h"
+#include "PADO/Character/PDCharacterMovementComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
@@ -569,6 +572,195 @@ bool FPDAimStateTransitionTest::RunTest(const FString& Parameters)
 	Holder->Tick(1.0f / 60.0f);
 	TestTrue(TEXT("무기를 잃으면 Idle로 돌아온다."),
 		Holder->GetAimState() == EPDAimState::Idle);
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDMovementStanceSpeedTest,
+	"PADO.Character.Movement.StanceSpeed",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDMovementStanceSpeedTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("이동 속도 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	UPDCharacterMovementComponent* Movement = Holder->GetPDCharacterMovement();
+	if (!TestNotNull(TEXT("커스텀 무브먼트가 붙어 있다."), Movement))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
+	AbilitySystem->InitAbilityActorInfo(Holder, Holder);
+	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	// 어트리뷰트 변경 델리게이트는 캐릭터의 BeginPlay 경계에서 연결된다.
+	Holder->DispatchBeginPlay();
+
+	const float BaseSpeed = AbilitySystem->GetNumericAttribute(
+		UPDMovementAttributeSet::GetMoveSpeedAttribute());
+	TestTrue(TEXT("어트리뷰트 기본 속도가 0보다 크다."), BaseSpeed > 0.0f);
+	TestEqual(TEXT("무브먼트가 어트리뷰트 속도를 받아 간다."),
+		Movement->GetAttributeMoveSpeed(), BaseSpeed, 0.01f);
+	TestEqual(TEXT("평상시 자세 배율은 1이다."),
+		Movement->GetStanceSpeedMultiplier(), 1.0f);
+
+	// 자세 배율은 어트리뷰트와 독립적으로 곱해진다.
+	Movement->SetAimState(EPDAimState::Shouldered);
+	TestEqual(TEXT("견착 배율이 적용된다."),
+		Movement->GetStanceSpeedMultiplier(),
+		Movement->ShoulderedSpeedMultiplier);
+
+	Movement->SetAimState(EPDAimState::Aiming);
+	TestEqual(TEXT("조준 배율이 적용된다."),
+		Movement->GetStanceSpeedMultiplier(),
+		Movement->AimingSpeedMultiplier);
+
+	// 조준 중에는 달리지 않는다.
+	Movement->SetWantsToSprint(true);
+	TestFalse(TEXT("조준 중에는 스프린트가 불가능하다."), Movement->CanSprint());
+	TestEqual(TEXT("조준 중 스프린트 입력은 배율을 바꾸지 않는다."),
+		Movement->GetStanceSpeedMultiplier(),
+		Movement->AimingSpeedMultiplier);
+
+	Movement->SetAimState(EPDAimState::Idle);
+	TestEqual(TEXT("평상시에는 스프린트 배율이 적용된다."),
+		Movement->GetStanceSpeedMultiplier(),
+		Movement->SprintSpeedMultiplier);
+	Movement->SetWantsToSprint(false);
+
+	// 슬로우는 어트리뷰트 계층에 붙고, 자세 배율과 곱해진다.
+	UPDGE_MoveSpeedMultiplier* SlowEffect =
+		NewObject<UPDGE_MoveSpeedMultiplier>(GetTransientPackage());
+	FGameplayEffectContextHandle EffectContext = AbilitySystem->MakeEffectContext();
+	FGameplayEffectSpec SlowSpec(SlowEffect, EffectContext, 1.0f);
+	SlowSpec.SetSetByCallerMagnitude(TAG_PD_Data_MoveSpeed_Multiplier, 0.5f);
+	AbilitySystem->ApplyGameplayEffectSpecToSelf(SlowSpec);
+
+	TestEqual(TEXT("50% 슬로우가 어트리뷰트 값을 절반으로 만든다."),
+		AbilitySystem->GetNumericAttribute(
+			UPDMovementAttributeSet::GetMoveSpeedAttribute()),
+		BaseSpeed * 0.5f, 0.01f);
+	TestEqual(TEXT("바뀐 어트리뷰트가 무브먼트까지 전달된다."),
+		Movement->GetAttributeMoveSpeed(), BaseSpeed * 0.5f, 0.01f);
+
+	Movement->SetAimState(EPDAimState::Shouldered);
+	TestEqual(
+		TEXT("견착과 슬로우가 곱해진다."),
+		Movement->GetAttributeMoveSpeed() * Movement->GetStanceSpeedMultiplier(),
+		BaseSpeed * 0.5f * Movement->ShoulderedSpeedMultiplier,
+		0.01f);
+
+	// 슬로우 두 개는 감소량이 더해지지 않고 곱해져야 한다.
+	FGameplayEffectSpec SecondSlowSpec(SlowEffect, EffectContext, 1.0f);
+	SecondSlowSpec.SetSetByCallerMagnitude(TAG_PD_Data_MoveSpeed_Multiplier, 0.5f);
+	AbilitySystem->ApplyGameplayEffectSpecToSelf(SecondSlowSpec);
+	TestEqual(TEXT("슬로우 두 개는 0이 아니라 0.25배가 된다."),
+		AbilitySystem->GetNumericAttribute(
+			UPDMovementAttributeSet::GetMoveSpeedAttribute()),
+		BaseSpeed * 0.25f, 0.01f);
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDMovementStancePredictionTest,
+	"PADO.Character.Movement.StancePrediction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDMovementStancePredictionTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("예측 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	UPDCharacterMovementComponent* Movement =
+		Holder ? Holder->GetPDCharacterMovement() : nullptr;
+	if (!TestNotNull(TEXT("커스텀 무브먼트를 얻는다."), Movement))
+	{
+		DestroyTestWorld(TestWorld);
+		return false;
+	}
+
+	// 자세가 압축 플래그를 왕복해도 그대로 복원돼야 서버 재생이 일치한다.
+	const EPDAimState States[] = {
+		EPDAimState::Idle,
+		EPDAimState::Shouldered,
+		EPDAimState::Aiming
+	};
+
+	for (const EPDAimState State : States)
+	{
+		for (int32 SprintStep = 0; SprintStep < 2; ++SprintStep)
+		{
+			const bool bSprint = SprintStep != 0;
+			Movement->SetAimState(State);
+			Movement->SetWantsToSprint(bSprint);
+
+			FPDSavedMove SavedMove;
+			SavedMove.SetMoveFor(Holder, 0.016f, FVector::ZeroVector,
+				*static_cast<FNetworkPredictionData_Client_Character*>(
+					Movement->GetPredictionData_Client()));
+
+			// 서버가 받는 것은 압축 플래그뿐이다.
+			const uint8 Flags = SavedMove.GetCompressedFlags();
+			Movement->SetAimState(EPDAimState::Idle);
+			Movement->SetWantsToSprint(false);
+			Movement->UpdateFromCompressedFlags(Flags);
+
+			TestTrue(
+				FString::Printf(TEXT("조준 단계가 압축 플래그를 왕복해도 같다. (%d)"),
+					static_cast<int32>(State)),
+				Movement->GetAimState() == State);
+			TestEqual(
+				FString::Printf(TEXT("스프린트 의도가 압축 플래그를 왕복해도 같다. (%d)"),
+					static_cast<int32>(State)),
+				Movement->WantsToSprint(), bSprint);
+		}
+	}
+
+	// 자세가 다른 이동은 합치지 않아야 서버 재생에서 구간이 뭉개지지 않는다.
+	Movement->SetAimState(EPDAimState::Idle);
+	Movement->SetWantsToSprint(false);
+	FNetworkPredictionData_Client_Character& ClientData =
+		*static_cast<FNetworkPredictionData_Client_Character*>(
+			Movement->GetPredictionData_Client());
+
+	TSharedPtr<FPDSavedMove> WalkMove = MakeShared<FPDSavedMove>();
+	WalkMove->SetMoveFor(Holder, 0.016f, FVector::ZeroVector, ClientData);
+
+	Movement->SetWantsToSprint(true);
+	TSharedPtr<FPDSavedMove> SprintMove = MakeShared<FPDSavedMove>();
+	SprintMove->SetMoveFor(Holder, 0.016f, FVector::ZeroVector, ClientData);
+
+	TestFalse(TEXT("스프린트 여부가 다른 이동은 합치지 않는다."),
+		WalkMove->CanCombineWith(SprintMove, Holder, 0.05f));
 
 	DestroyTestWorld(TestWorld);
 	return true;

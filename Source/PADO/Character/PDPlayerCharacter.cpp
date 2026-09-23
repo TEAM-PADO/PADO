@@ -8,6 +8,8 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Engine/OverlapResult.h"
+#include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
+#include "PADO/Character/PDCharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
@@ -39,7 +41,10 @@ namespace PDCharacterDefaults
 	constexpr float CameraSettleTolerance = 0.1f;
 }
 
-APDPlayerCharacter::APDPlayerCharacter()
+APDPlayerCharacter::APDPlayerCharacter(
+	const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UPDCharacterMovementComponent>(
+		ACharacter::CharacterMovementComponentName))
 {
 	GetCapsuleComponent()->InitCapsuleSize(PDCharacterDefaults::CapsuleRadius, PDCharacterDefaults::CapsuleHalfHeight);
 
@@ -87,6 +92,9 @@ APDPlayerCharacter::APDPlayerCharacter()
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 
+	MovementAttributes =
+		CreateDefaultSubobject<UPDMovementAttributeSet>(TEXT("MovementAttributes"));
+
 	HeldItemComponent =
 		CreateDefaultSubobject<UPDHeldItemComponent>(TEXT("HeldItem"));
 	KnockbackComponent =
@@ -109,9 +117,18 @@ void APDPlayerCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	// 조준 중 무기를 잃으면 단계를 유지할 근거가 없다. 드롭·파괴 모두 여기로 모인다.
-	if (AimState != EPDAimState::Idle && !CanEnterAimState())
+	if (GetAimState() != EPDAimState::Idle && !CanEnterAimState())
 	{
 		SetAimState(EPDAimState::Idle);
+	}
+
+	// 소유 클라이언트는 입력으로, 서버는 이동 압축 플래그로 단계를 받는다.
+	// 두 경로를 한곳에서 비교해 실제로 바뀐 순간에만 알린다.
+	const EPDAimState CurrentAimState = GetAimState();
+	if (LastBroadcastAimState != CurrentAimState)
+	{
+		LastBroadcastAimState = CurrentAimState;
+		OnAimStateChanged.Broadcast(CurrentAimState);
 	}
 
 	UpdateAimCamera(DeltaSeconds);
@@ -137,9 +154,55 @@ void APDPlayerCharacter::PawnClientRestart()
 
 void APDPlayerCharacter::InitializeAbilityActorInfo()
 {
-	if (AbilitySystemComponent)
+	if (!AbilitySystemComponent)
 	{
-		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+		return;
+	}
+
+	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+
+	// ASC는 InitializeComponent에서 소유자의 AttributeSet을 자동 수집하지만,
+	// 그건 Outer가 같은 Actor일 때만이고 실행 시점도 액터 초기화에 묶여 있다.
+	// 나중에 ASC를 PlayerState로 옮기면 자동 수집이 닿지 않으므로 직접 등록한다.
+	// AddSpawnedAttribute는 AddUnique라 여러 번 불려도 안전하다.
+	if (MovementAttributes)
+	{
+		AbilitySystemComponent->AddSpawnedAttribute(MovementAttributes);
+	}
+
+	// 이 함수는 BeginPlay/Possess/OnRep/Restart 경계마다 불린다. 중복 등록을 막는다.
+	if (!bMoveSpeedDelegateBound)
+	{
+		AbilitySystemComponent
+			->GetGameplayAttributeValueChangeDelegate(
+				UPDMovementAttributeSet::GetMoveSpeedAttribute())
+			.AddUObject(this, &APDPlayerCharacter::HandleMoveSpeedChanged);
+		bMoveSpeedDelegateBound = true;
+	}
+
+	PushMoveSpeedToMovement();
+}
+
+UPDCharacterMovementComponent* APDPlayerCharacter::GetPDCharacterMovement() const
+{
+	return Cast<UPDCharacterMovementComponent>(GetCharacterMovement());
+}
+
+void APDPlayerCharacter::PushMoveSpeedToMovement()
+{
+	UPDCharacterMovementComponent* Movement = GetPDCharacterMovement();
+	if (Movement && MovementAttributes)
+	{
+		Movement->SetAttributeMoveSpeed(MovementAttributes->GetMoveSpeed());
+	}
+}
+
+void APDPlayerCharacter::HandleMoveSpeedChanged(
+	const FOnAttributeChangeData& ChangeData)
+{
+	if (UPDCharacterMovementComponent* Movement = GetPDCharacterMovement())
+	{
+		Movement->SetAttributeMoveSpeed(ChangeData.NewValue);
 	}
 }
 
@@ -177,12 +240,20 @@ void APDPlayerCharacter::StopJump()
 
 void APDPlayerCharacter::StartSprinting_Implementation()
 {
-	// Intentionally empty. Sprinting requires an authoritative, predicted movement implementation.
+	// 의도만 세운다. 실제 속도 판정은 무브먼트가 조준 단계와 함께 결정하고,
+	// 압축 플래그로 서버에 전달돼 같은 값으로 재생된다.
+	if (UPDCharacterMovementComponent* Movement = GetPDCharacterMovement())
+	{
+		Movement->SetWantsToSprint(true);
+	}
 }
 
 void APDPlayerCharacter::StopSprinting_Implementation()
 {
-	// Intentionally empty. Sprinting requires an authoritative, predicted movement implementation.
+	if (UPDCharacterMovementComponent* Movement = GetPDCharacterMovement())
+	{
+		Movement->SetWantsToSprint(false);
+	}
 }
 
 void APDPlayerCharacter::Interact_Implementation()
@@ -333,7 +404,7 @@ void APDPlayerCharacter::StartShouldering()
 void APDPlayerCharacter::StopShouldering()
 {
 	// 토글로 켠 조준은 입력을 떼도 유지한다.
-	if (AimState == EPDAimState::Shouldered)
+	if (GetAimState() == EPDAimState::Shouldered)
 	{
 		SetAimState(EPDAimState::Idle);
 	}
@@ -342,25 +413,33 @@ void APDPlayerCharacter::StopShouldering()
 void APDPlayerCharacter::ToggleAiming()
 {
 	SetAimState(
-		AimState == EPDAimState::Aiming
+		GetAimState() == EPDAimState::Aiming
 			? EPDAimState::Idle
 			: EPDAimState::Aiming);
 }
 
 void APDPlayerCharacter::SetAimState(EPDAimState NewAimState)
 {
+	UPDCharacterMovementComponent* Movement = GetPDCharacterMovement();
+	if (!Movement)
+	{
+		return;
+	}
+
 	if (NewAimState != EPDAimState::Idle && !CanEnterAimState())
 	{
 		NewAimState = EPDAimState::Idle;
 	}
 
-	if (AimState == NewAimState)
-	{
-		return;
-	}
+	// 단계는 무브먼트가 소유한다. 이동 압축 플래그로 서버에 전달되고
+	// 서버가 같은 값으로 이동을 재생하므로 속도가 어긋나지 않는다.
+	Movement->SetAimState(NewAimState);
+}
 
-	AimState = NewAimState;
-	OnAimStateChanged.Broadcast(AimState);
+EPDAimState APDPlayerCharacter::GetAimState() const
+{
+	const UPDCharacterMovementComponent* Movement = GetPDCharacterMovement();
+	return Movement ? Movement->GetAimState() : EPDAimState::Idle;
 }
 
 bool APDPlayerCharacter::CanEnterAimState() const
@@ -393,7 +472,7 @@ void APDPlayerCharacter::UpdateAimCamera(float DeltaSeconds)
 		return;
 	}
 
-	const FPDAimCameraPose& TargetPose = GetAimCameraPose(AimState);
+	const FPDAimCameraPose& TargetPose = GetAimCameraPose(GetAimState());
 
 	// 목표에 도달했으면 매 프레임 계산하지 않는다.
 	if (FMath::IsNearlyEqual(

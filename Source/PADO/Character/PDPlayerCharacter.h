@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "AbilitySystemInterface.h"
 #include "GameFramework/Character.h"
+#include "PADO/AbilitySystem/Interface/PDAimStateProvider.h"
 #include "PDPlayerCharacter.generated.h"
 
 class APDWorldItemActor;
@@ -14,18 +15,9 @@ class UAbilitySystemComponent;
 class UPDAbilitySystemComponent;
 class UPDHeldItemComponent;
 class UPDKnockbackComponent;
-
-/** 조준 단계다. 카메라가 이 값을 따르고, 이후 애니메이션과 탄퍼짐도 여기에 붙는다. */
-UENUM(BlueprintType)
-enum class EPDAimState : uint8
-{
-	/** 평상시 3인칭 시점이다. */
-	Idle,
-	/** 견착이다. 조준 입력을 누르고 있는 동안 유지한다. */
-	Shouldered,
-	/** 조준이다. 조준 입력을 짧게 눌러 켜고 끈다. */
-	Aiming
-};
+class UPDCharacterMovementComponent;
+class UPDMovementAttributeSet;
+struct FOnAttributeChangeData;
 
 /** 조준 단계별 카메라 배치다. */
 USTRUCT(BlueprintType)
@@ -67,11 +59,12 @@ UCLASS(Blueprintable)
 class PADO_API APDPlayerCharacter
 	: public ACharacter
 	, public IAbilitySystemInterface
+	, public IPDAimStateProvider
 {
 	GENERATED_BODY()
 
 public:
-	APDPlayerCharacter();
+	explicit APDPlayerCharacter(const FObjectInitializer& ObjectInitializer);
 	virtual void Tick(float DeltaSeconds) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
@@ -139,7 +132,7 @@ public:
 	void SetAimState(EPDAimState NewAimState);
 
 	UFUNCTION(BlueprintPure, Category = "PADO|Aim")
-	EPDAimState GetAimState() const { return AimState; }
+	virtual EPDAimState GetAimState() const override;
 
 	/** 조준 조건을 만족하는지 본다. 기본값에서는 아이템을 들고 있어야 한다. */
 	UFUNCTION(BlueprintPure, Category = "PADO|Aim")
@@ -184,6 +177,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Camera")
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
+	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
+
+	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
+	const UPDMovementAttributeSet* GetMovementAttributes() const
+	{
+		return MovementAttributes;
+	}
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
@@ -194,6 +196,8 @@ private:
 	void InitializeAbilityActorInfo();
 	const FPDAimCameraPose& GetAimCameraPose(EPDAimState State) const;
 	void UpdateAimCamera(float DeltaSeconds);
+	void PushMoveSpeedToMovement();
+	void HandleMoveSpeedChanged(const FOnAttributeChangeData& ChangeData);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -209,6 +213,10 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDKnockbackComponent> KnockbackComponent;
+
+	/** 슬로우·헤이스트가 붙는 계층이다. ASC가 소유자로 등록한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Movement", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDMovementAttributeSet> MovementAttributes;
 
 	/** 시선 Sweep의 굵기다. 크게 잡을수록 작은 아이템을 조준하기 쉽다. */
 	UPROPERTY(
@@ -250,6 +258,12 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
 	bool bRequireHeldItemToAim = true;
 
-	/** 로컬 시점 상태다. 복제하지 않는다. 카메라는 보는 사람에게만 의미가 있다. */
-	EPDAimState AimState = EPDAimState::Idle;
+	/**
+	 * 마지막으로 알린 단계다. 소유 클라이언트는 입력으로, 서버는 이동 압축
+	 * 플래그로 단계를 받기 때문에 양쪽 경로를 Tick에서 한 번에 비교한다.
+	 */
+	EPDAimState LastBroadcastAimState = EPDAimState::Idle;
+
+	/** ASC 초기화 경계를 여러 번 지나므로 중복 등록을 막는다. */
+	bool bMoveSpeedDelegateBound = false;
 };

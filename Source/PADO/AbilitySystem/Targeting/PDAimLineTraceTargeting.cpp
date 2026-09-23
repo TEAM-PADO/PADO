@@ -10,6 +10,8 @@
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogPDTargeting, Log, All);
+
 UPDAimLineTraceTargeting::UPDAimLineTraceTargeting()
 {
 	TargetObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
@@ -46,9 +48,7 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	const FPDActionTargetingContext& Context,
 	TArray<FPDActionTarget>& OutTargets) const
 {
-	FVector Start;
-	FVector End;
-	if (!ResolveTrace(Context, Start, End) || !Context.SourceActor)
+	if (!Context.SourceActor)
 	{
 		return;
 	}
@@ -65,6 +65,13 @@ void UPDAimLineTraceTargeting::GatherTargets(
 		Cast<UActorComponent>(Context.SourceObject))
 	{
 		QueryParams.AddIgnoredActor(SourceComponent->GetOwner());
+	}
+
+	FVector Start;
+	FVector End;
+	if (!ResolveTrace(Context, *World, QueryParams, Start, End))
+	{
+		return;
 	}
 
 	FCollisionObjectQueryParams ObjectParams;
@@ -133,10 +140,28 @@ void UPDAimLineTraceTargeting::GatherTargets(
 #endif
 }
 
-bool UPDAimLineTraceTargeting::ResolveTrace(
+EPDAimTraceOrigin UPDAimLineTraceTargeting::ResolveOriginForAimState(
+	const FPDActionTargetingContext& Context) const
+{
+	const IPDAimStateProvider* AimProvider =
+		Cast<IPDAimStateProvider>(Context.SourceActor);
+	if (!AimProvider)
+	{
+		return TraceOrigin;
+	}
+
+	const EPDAimTraceOrigin* Override =
+		OriginByAimState.Find(AimProvider->GetAimState());
+	return Override ? *Override : TraceOrigin;
+}
+
+bool UPDAimLineTraceTargeting::ResolveAimPoint(
 	const FPDActionTargetingContext& Context,
-	FVector& OutStart,
-	FVector& OutEnd) const
+	const UWorld& World,
+	const FCollisionQueryParams& QueryParams,
+	FVector& OutViewStart,
+	FRotator& OutAimRotation,
+	FVector& OutAimPoint) const
 {
 	AActor* SourceActor = Context.SourceActor;
 	if (!SourceActor)
@@ -144,28 +169,62 @@ bool UPDAimLineTraceTargeting::ResolveTrace(
 		return false;
 	}
 
-	FRotator AimRotation = SourceActor->GetActorRotation();
+	OutAimRotation = SourceActor->GetActorRotation();
 	if (const APawn* SourcePawn = Cast<APawn>(SourceActor))
 	{
-		AimRotation = SourcePawn->GetBaseAimRotation();
+		OutAimRotation = SourcePawn->GetBaseAimRotation();
+
+		// 3인칭 카메라는 캐릭터 뒤 위쪽에 있다. Controller 시점을 써야
+		// 화면 중앙이 가리키는 지점과 판정이 일치한다.
+		if (const AController* SourceController = SourcePawn->GetController())
+		{
+			SourceController->GetPlayerViewPoint(OutViewStart, OutAimRotation);
+		}
+		else
+		{
+			SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
+		}
+	}
+	else
+	{
+		SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
 	}
 
-	switch (TraceOrigin)
+	const FVector ViewEnd =
+		OutViewStart + OutAimRotation.Vector() * TraceDistance;
+
+	// 아무것도 맞지 않으면 사거리 끝을 조준점으로 삼는다.
+	FHitResult ViewHit;
+	OutAimPoint = World.LineTraceSingleByChannel(
+		ViewHit, OutViewStart, ViewEnd, ECC_Visibility, QueryParams)
+			? ViewHit.ImpactPoint
+			: ViewEnd;
+	return !OutViewStart.ContainsNaN() && !OutAimPoint.ContainsNaN();
+}
+
+bool UPDAimLineTraceTargeting::ResolveTrace(
+	const FPDActionTargetingContext& Context,
+	const UWorld& World,
+	const FCollisionQueryParams& QueryParams,
+	FVector& OutStart,
+	FVector& OutEnd) const
+{
+	AActor* SourceActor = Context.SourceActor;
+	FVector ViewStart;
+	FRotator AimRotation;
+	FVector AimPoint;
+	if (!SourceActor ||
+		!ResolveAimPoint(Context, World, QueryParams, ViewStart, AimRotation, AimPoint))
+	{
+		return false;
+	}
+
+	// 1단계에서 구한 조준점으로 2단계 판정을 쏜다. 총구에서 나가도
+	// 화면 중앙에 맞는다.
+	OutStart = ViewStart;
+	switch (ResolveOriginForAimState(Context))
 	{
 	case EPDAimTraceOrigin::SourceViewPoint:
-		// 3인칭에서는 카메라가 캐릭터 뒤 위쪽에 있어서, 폰의 눈 위치에서 쏘면
-		// 조준 방향이 같아도 화면 중앙보다 일정하게 위로 빗나간다. Controller의
-		// 시점을 쓰면 화면 중앙이 곧 탄착점이 된다. AI Controller는
-		// GetPlayerViewPoint가 폰의 눈 위치를 돌려주므로 동작이 바뀌지 않는다.
-		if (const APawn* SourcePawn = Cast<APawn>(SourceActor))
-		{
-			if (const AController* SourceController = SourcePawn->GetController())
-			{
-				SourceController->GetPlayerViewPoint(OutStart, AimRotation);
-				break;
-			}
-		}
-		SourceActor->GetActorEyesViewPoint(OutStart, AimRotation);
 		break;
 
 	case EPDAimTraceOrigin::ItemSocket:
@@ -178,11 +237,20 @@ bool UPDAimLineTraceTargeting::ResolveTrace(
 			const UMeshComponent* ItemMesh = ItemActor
 				? ItemActor->GetItemMesh()
 				: nullptr;
-			if (!ItemMesh || !ItemMesh->DoesSocketExist(ItemSocketName))
+			if (ItemMesh && ItemMesh->DoesSocketExist(ItemSocketName))
 			{
-				return false;
+				OutStart = ItemMesh->GetSocketLocation(ItemSocketName);
+				break;
 			}
-			OutStart = ItemMesh->GetSocketLocation(ItemSocketName);
+
+			// 소켓이 없다고 발사를 막지는 않는다. 검증용 메시에는 총구 소켓이
+			// 없는 경우가 흔하므로 시점 기준으로 내려서 쏜다.
+			UE_LOG(
+				LogPDTargeting,
+				Warning,
+				TEXT("'%s'에 소켓 '%s'가 없어 시점 기준으로 대체합니다."),
+				*GetNameSafe(ItemActor),
+				*ItemSocketName.ToString());
 			break;
 		}
 
@@ -193,6 +261,6 @@ bool UPDAimLineTraceTargeting::ResolveTrace(
 	}
 
 	OutStart += AimRotation.RotateVector(OriginOffset);
-	OutEnd = OutStart + AimRotation.Vector() * TraceDistance;
+	OutEnd = AimPoint;
 	return !OutStart.ContainsNaN() && !OutEnd.ContainsNaN();
 }
