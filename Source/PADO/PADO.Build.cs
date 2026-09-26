@@ -8,7 +8,13 @@ public class PADO : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[]
+		{
+			"Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
+
+			// GMS(Gameplay Message Router)
+			"GameplayTags", "GameplayMessageRuntime"
+		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
