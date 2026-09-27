@@ -16,7 +16,11 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
+#include "GameplayEffectTypes.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
+#include "PADO/AbilitySystem/Cue/PDGameplayCueNotify_Tracer.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/AbilitySystem/Struct/PDActionHookStruct.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
@@ -34,6 +38,7 @@
 #include "PADO/Item/PDWorldItemActor.h"
 #include "TimerManager.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/UObjectIterator.h"
 
 namespace PDWeaponSystemTests
 {
@@ -584,6 +589,7 @@ bool FPDGameplayCueTagTest::RunTest(const FString& Parameters)
 	// ini가 실제로 로드됐는지까지 여기서 확인한다.
 	const TCHAR* WeaponCueNames[] = {
 		TEXT("GameplayCue.Weapon.AssaultRifle.Fire"),
+		TEXT("GameplayCue.Weapon.AssaultRifle.Tracer"),
 		TEXT("GameplayCue.Weapon.SniperRifle.Fire"),
 		TEXT("GameplayCue.Weapon.Impact.Default")
 	};
@@ -1134,6 +1140,136 @@ bool FPDAimLineTraceShotResultTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("벽보다 앞에서 멈춘다."),
 				TargetHit.ShotResult.ImpactPoint.X < 490.0);
 		}
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDTracerCueTest,
+	"PADO.Item.Weapon.TracerCue",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDTracerCueTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	// 렌더링할 수 없는 환경(-nullrhi, 데디케이티드 서버)에서는 엔진이 Niagara
+	// 컴포넌트를 만들지 않는다. 검증할 대상이 없으므로 건너뛴다.
+	if (!FApp::CanEverRender())
+	{
+		AddInfo(TEXT("렌더링할 수 없는 환경이라 트레이서 Cue 검증을 건너뜁니다."));
+		return true;
+	}
+
+	UNiagaraSystem* TracerSystem = LoadObject<UNiagaraSystem>(
+		nullptr,
+		TEXT("/Game/KIC/VFX/Gun/BulletLaser/NS_BulletTracer.NS_BulletTracer"));
+	UNiagaraSystem* ImpactSystem = LoadObject<UNiagaraSystem>(
+		nullptr,
+		TEXT("/Game/KIC/Trap/LaserTrap/NS_LaserSpark1.NS_LaserSpark1"));
+	if (!TestNotNull(TEXT("트레이서 Niagara System을 로드한다."), TracerSystem) ||
+		!TestNotNull(TEXT("탄착 Niagara System을 로드한다."), ImpactSystem))
+	{
+		return false;
+	}
+
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("트레이서 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	auto FindComponents = [TestWorld](const UNiagaraSystem* System)
+	{
+		TArray<UNiagaraComponent*> Found;
+		for (TObjectIterator<UNiagaraComponent> It; It; ++It)
+		{
+			if (IsValid(*It) && It->GetWorld() == TestWorld && It->GetAsset() == System)
+			{
+				Found.Add(*It);
+			}
+		}
+		return Found;
+	};
+
+	AActor* Shooter = TestWorld->SpawnActor<AActor>();
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("사수를 스폰한다."), Shooter) &&
+		TestNotNull(TEXT("무기를 스폰한다."), Weapon))
+	{
+		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Weapon, 30, true);
+		UStaticMeshSocket* MuzzleSocket =
+			NewObject<UStaticMeshSocket>(Definition->Presentation.StaticMesh);
+		MuzzleSocket->SocketName = TEXT("Muzzle");
+		MuzzleSocket->RelativeLocation = FVector(50.0f, 0.0f, 0.0f);
+		Definition->Presentation.StaticMesh->Sockets.Add(MuzzleSocket);
+		TestTrue(TEXT("총구 소켓이 있는 무기를 초기화한다."), Weapon->InitializeItem(Definition));
+		Weapon->SetActorLocation(FVector(0.0f, 0.0f, 100.0f));
+		const FVector Muzzle = Weapon->GetItemMesh()->GetSocketLocation(TEXT("Muzzle"));
+
+		UPDGameplayCueNotify_Tracer* Notify =
+			NewObject<UPDGameplayCueNotify_Tracer>(GetTransientPackage());
+		Notify->TracerSystem = TracerSystem;
+		Notify->ImpactSystem = ImpactSystem;
+		Notify->TracerSpeed = 10000.0f;
+
+		// 판정 시작점을 총구와 다르게 둔다. 출발점은 판정이 아니라 이 화면의
+		// 총구여야 한다.
+		auto MakeShotCue = [Shooter, Weapon](const FVector& StopPoint, bool bBlocked)
+		{
+			FHitResult Shot(FVector(0.0f, 0.0f, 160.0f), FVector(3000.0f, 0.0f, 100.0f));
+			Shot.bBlockingHit = bBlocked;
+			Shot.Location = StopPoint;
+			Shot.ImpactPoint = StopPoint;
+			Shot.Normal = FVector(-1.0f, 0.0f, 0.0f);
+			Shot.ImpactNormal = Shot.Normal;
+
+			FGameplayEffectContextHandle Context(new FGameplayEffectContext());
+			Context.AddInstigator(Shooter, Weapon);
+			Context.AddHitResult(Shot, true);
+			FGameplayCueParameters CueParameters(Context);
+			CueParameters.EffectCauser = Weapon;
+			return CueParameters;
+		};
+
+		const FVector WallPoint(1000.0f, 0.0f, 100.0f);
+		TestTrue(TEXT("막힌 탄의 Cue를 처리한다."),
+			Notify->OnExecute(Shooter, MakeShotCue(WallPoint, true)));
+
+		TArray<UNiagaraComponent*> Tracers = FindComponents(TracerSystem);
+		if (TestEqual(TEXT("트레이서를 하나 스폰한다."), Tracers.Num(), 1))
+		{
+			TestEqual(TEXT("트레이서는 총구에서 출발한다."),
+				Tracers[0]->GetComponentLocation(), Muzzle, 0.1f);
+			TestNull(TEXT("트레이서는 총에 붙지 않는다."),
+				Tracers[0]->GetAttachParent());
+			bool bHasEnd = false;
+			const FVector TracerEnd =
+				Tracers[0]->GetVariablePosition(TEXT("TracerEnd"), bHasEnd);
+			TestTrue(TEXT("트레이서에 끝점을 넘긴다."), bHasEnd);
+			TestEqual(TEXT("끝점은 이번 발이 멈춘 곳이다."), TracerEnd, WallPoint, 0.1f);
+		}
+
+		// 탄착은 탄 머리가 끝점에 닿을 때 나온다. 950cm / 10000cm/s = 0.095초.
+		TestEqual(TEXT("탄착은 바로 나오지 않는다."), FindComponents(ImpactSystem).Num(), 0);
+		AdvanceTestWorld(TestWorld, 0.05f);
+		TestEqual(TEXT("도착 전에는 탄착이 없다."), FindComponents(ImpactSystem).Num(), 0);
+		AdvanceTestWorld(TestWorld, 0.1f);
+		TArray<UNiagaraComponent*> Impacts = FindComponents(ImpactSystem);
+		if (TestEqual(TEXT("도착하면 탄착이 하나 나온다."), Impacts.Num(), 1))
+		{
+			TestEqual(TEXT("탄착은 끝점에서 나온다."),
+				Impacts[0]->GetComponentLocation(), WallPoint, 0.1f);
+		}
+
+		// 빗나간 탄은 허공에서 멈췄다. 트레이서만 날리고 탄착은 없다.
+		TestTrue(TEXT("빗나간 탄의 Cue를 처리한다."),
+			Notify->OnExecute(Shooter, MakeShotCue(FVector(3000.0f, 0.0f, 100.0f), false)));
+		AdvanceTestWorld(TestWorld, 1.0f);
+		TestEqual(TEXT("빗나간 탄은 탄착을 남기지 않는다."),
+			FindComponents(ImpactSystem).Num(), 1);
 	}
 
 	DestroyTestWorld(TestWorld);
