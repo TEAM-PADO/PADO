@@ -18,5 +18,5 @@ public:
 
 	virtual void GatherTargets(
 		const FPDActionTargetingContext& Context,
-		TArray<FPDActionTarget>& OutTargets) const override;
+		FPDActionTargetingResult& OutResult) const override;
 };

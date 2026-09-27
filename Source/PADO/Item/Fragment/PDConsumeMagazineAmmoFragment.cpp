@@ -10,6 +10,28 @@ UPDConsumeMagazineAmmoFragment::UPDConsumeMagazineAmmoFragment()
 	bRequired = true;
 }
 
+bool UPDConsumeMagazineAmmoFragment::CanActivateWithPredictedState(
+	const FPDActionExecutionContext& Context,
+	FString& OutError) const
+{
+	OutError.Reset();
+	UPDWeaponMagazineComponent* Magazine = ResolveMagazine(Context);
+	if (!Magazine)
+	{
+		// 탄창이 없는 아이템은 탄약 제약이 없다. 여기서 막으면 저작 실수로
+		// 붙은 Fragment 하나가 아이템 사용을 통째로 잠근다.
+		return true;
+	}
+
+	if (!Magazine->CanConsumeRoundWithReplicatedState())
+	{
+		OutError = TEXT("탄창이 비었거나 재장전 중입니다.");
+		return false;
+	}
+
+	return true;
+}
+
 bool UPDConsumeMagazineAmmoFragment::CanExecute(
 	const FPDActionExecutionContext& Context,
 	FString& OutError) const

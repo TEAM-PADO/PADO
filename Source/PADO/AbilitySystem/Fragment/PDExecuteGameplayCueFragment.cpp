@@ -29,6 +29,23 @@ bool UPDExecuteGameplayCueFragment::Validate(FString& OutError) const
 		return false;
 	}
 
+	// 대상은 서버가 정한다. 클라이언트가 미리 고른 대상에 연출을 붙이면
+	// 서버가 다른 대상을 고른 경우 엉뚱한 곳에서 터진다.
+	if (bPredictOnOwningClient && ApplicationScope == EPDActionScope::Target)
+	{
+		OutError = TEXT(
+			"Target Scope Cue는 예측 재생할 수 없습니다. 대상은 서버가 정합니다.");
+		return false;
+	}
+
+	// 소켓 위치로 덮으면 이번 발이 멈춘 곳이 사라진다.
+	if (bPlayAtShotEnd && !ItemSocketName.IsNone())
+	{
+		OutError = TEXT(
+			"이번 발이 멈춘 곳에서 재생하는 Cue는 ItemSocketName을 쓸 수 없습니다.");
+		return false;
+	}
+
 	return true;
 }
 
@@ -37,16 +54,32 @@ bool UPDExecuteGameplayCueFragment::SupportsDeferredExecution() const
 	return true;
 }
 
+bool UPDExecuteGameplayCueFragment::SupportsLocalPrediction() const
+{
+	return bPredictOnOwningClient;
+}
+
+bool UPDExecuteGameplayCueFragment::RequiresShotResult() const
+{
+	return bPlayAtShotEnd;
+}
+
 bool UPDExecuteGameplayCueFragment::CanExecute(
 	const FPDActionExecutionContext& Context,
 	FString& OutError) const
 {
 	OutError.Reset();
-	if (!Context.IsAuthoritative() ||
+	if (!Context.IsAuthoritativeOrPredicting() ||
 		!Context.ResolveScopedAbilitySystem(ApplicationScope) ||
 		!IsValid(Context.ResolveScopedActor(ApplicationScope)))
 	{
 		OutError = TEXT("GameplayCue를 실행할 권한, ASC 또는 대상 Actor가 없습니다.");
+		return false;
+	}
+
+	if (bPlayAtShotEnd && !Context.bHasShotResult)
+	{
+		OutError = TEXT("이번 발 결과가 없어 멈춘 곳에서 재생할 수 없습니다.");
 		return false;
 	}
 
@@ -59,10 +92,22 @@ bool UPDExecuteGameplayCueFragment::Execute(
 	UAbilitySystemComponent* ScopedAbilitySystem =
 		Context.ResolveScopedAbilitySystem(ApplicationScope);
 	AActor* ScopedActor = Context.ResolveScopedActor(ApplicationScope);
-	if (!Context.IsAuthoritative() || !ScopedAbilitySystem ||
+	if (!Context.IsAuthoritativeOrPredicting() || !ScopedAbilitySystem ||
 		!IsValid(ScopedActor) || !CueTag.IsValid())
 	{
 		return false;
+	}
+
+	const FHitResult* CueHit = ResolveCueHit(Context);
+	if (bPlayAtShotEnd && !CueHit)
+	{
+		return false;
+	}
+
+	// 빗나간 탄은 허공에서 멈췄다. 탄착 연출을 거르는 것은 실패가 아니다.
+	if (bPlayAtShotEnd && bOnlyWhenShotBlocked && !CueHit->bBlockingHit)
+	{
+		return true;
 	}
 
 	UObject* SourceObject = Context.Ability
@@ -94,7 +139,7 @@ bool UPDExecuteGameplayCueFragment::Execute(
 	const bool bHasItemSocketLocation =
 		ResolveItemSocketLocation(EffectCauser, ItemSocketLocation);
 
-	FHitResult CueHitResult = Context.HitResult;
+	FHitResult CueHitResult = CueHit ? *CueHit : FHitResult();
 	if (bHasCueDirection)
 	{
 		CueHitResult.Normal = CueDirection;
@@ -113,7 +158,7 @@ bool UPDExecuteGameplayCueFragment::Execute(
 	{
 		EffectContext.AddSourceObject(SourceObject);
 	}
-	if (Context.bHasHitResult)
+	if (CueHit)
 	{
 		EffectContext.AddHitResult(CueHitResult, true);
 	}
@@ -127,7 +172,7 @@ bool UPDExecuteGameplayCueFragment::Execute(
 		: 1;
 	CueParameters.bReplicateLocationWhenUsingMinimalRepProxy = true;
 
-	if (Context.bHasHitResult)
+	if (CueHit)
 	{
 		CueParameters.Location = CueHitResult.ImpactPoint;
 		CueParameters.Normal = CueHitResult.ImpactNormal;
@@ -181,9 +226,9 @@ FVector UPDExecuteGameplayCueFragment::ResolveDirection(
 		break;
 
 	case EPDGameplayCueDirectionMode::InverseHitNormal:
-		if (Context.bHasHitResult)
+		if (const FHitResult* CueHit = ResolveCueHit(Context))
 		{
-			Direction = -Context.HitResult.ImpactNormal;
+			Direction = -CueHit->ImpactNormal;
 		}
 		break;
 
@@ -221,6 +266,17 @@ FVector UPDExecuteGameplayCueFragment::ResolveDirection(
 		? Direction
 		: (Direction.ToOrientationQuat() * DirectionOffset.Quaternion())
 			.GetForwardVector();
+}
+
+const FHitResult* UPDExecuteGameplayCueFragment::ResolveCueHit(
+	const FPDActionExecutionContext& Context) const
+{
+	if (bPlayAtShotEnd)
+	{
+		return Context.bHasShotResult ? &Context.ShotResult : nullptr;
+	}
+
+	return Context.bHasHitResult ? &Context.HitResult : nullptr;
 }
 
 bool UPDExecuteGameplayCueFragment::ResolveItemSocketLocation(

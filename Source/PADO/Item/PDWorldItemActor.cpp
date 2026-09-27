@@ -13,6 +13,7 @@
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
+#include "PADO/Item/Trait/PDItemMagazineTrait.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDWorldItem, Log, All);
 
@@ -294,7 +295,8 @@ UPDAbilitySourceComponent* APDWorldItemActor::GetAbilitySourceComponent() const
 
 UPDWeaponMagazineComponent* APDWorldItemActor::GetMagazineComponent() const
 {
-	return ItemDefinition && ItemDefinition->HasMagazine()
+	// 탄창 Trait이 없는 아이템은 Component가 있어도 노출하지 않는다.
+	return ItemDefinition && ItemDefinition->FindTrait<UPDItemMagazineTrait>()
 		? MagazineComponent
 		: nullptr;
 }

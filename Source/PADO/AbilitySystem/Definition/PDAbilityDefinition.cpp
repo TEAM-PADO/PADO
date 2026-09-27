@@ -134,6 +134,25 @@ bool UPDAbilityDefinition::ValidateWithActionContract(FString& OutError) const
 
 		for (const UPDActionFragment* Fragment : Hook.Fragments)
 		{
+			// 이번 발 결과는 선을 긋는 Targeting이 OnExecuteStart에만 넘긴다.
+			// 다른 곳에 두면 조용히 재생되지 않는다.
+			if (Fragment && Fragment->RequiresShotResult())
+			{
+				if (!Hook.HookTag.MatchesTagExact(TAG_PD_ActionHook_OnExecuteStart))
+				{
+					OutError = TEXT(
+						"이번 발 결과를 쓰는 Fragment는 OnExecuteStart Hook에만 배치할 수 있습니다.");
+					return false;
+				}
+
+				if (!ActionTargeting->ProducesShotResult())
+				{
+					OutError = TEXT(
+						"이번 발 결과를 쓰는 Fragment에는 Aim Line Trace처럼 결과를 만드는 Targeting이 필요합니다.");
+					return false;
+				}
+			}
+
 			if (!Fragment || !Fragment->IsA<UPDApplyMontageHitLagFragment>())
 			{
 				continue;

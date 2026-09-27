@@ -1,12 +1,16 @@
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
 #include "PADO/Item/PDWorldItemActor.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
-#include "TimerManager.h"
+#include "PADO/Item/Trait/PDItemMagazineTrait.h"
 
 UPDWeaponMagazineComponent::UPDWeaponMagazineComponent()
 {
@@ -22,7 +26,9 @@ bool UPDWeaponMagazineComponent::InitializeMagazine(bool bResetToFull)
 	{
 		return false;
 	}
-	if (!Definition->HasMagazine())
+	const UPDItemMagazineTrait* MagazineTrait =
+		Definition->FindTrait<UPDItemMagazineTrait>();
+	if (!MagazineTrait)
 	{
 		CancelReload();
 		CurrentMagazineAmmo = 0;
@@ -38,14 +44,14 @@ bool UPDWeaponMagazineComponent::InitializeMagazine(bool bResetToFull)
 	if (bResetToFull || !bMagazineInitialized || bDefinitionChanged)
 	{
 		CancelReload();
-		CurrentMagazineAmmo = Definition->Magazine.Capacity;
+		CurrentMagazineAmmo = MagazineTrait->Capacity;
 	}
 	else
 	{
 		CurrentMagazineAmmo = FMath::Clamp(
 			CurrentMagazineAmmo,
 			0,
-			Definition->Magazine.Capacity);
+			MagazineTrait->Capacity);
 	}
 
 	bMagazineInitialized = true;
@@ -53,6 +59,17 @@ bool UPDWeaponMagazineComponent::InitializeMagazine(bool bResetToFull)
 	BroadcastMagazineChanged();
 	ForceOwnerNetUpdate();
 	return true;
+}
+
+bool UPDWeaponMagazineComponent::CanConsumeRoundWithReplicatedState() const
+{
+	// bMagazineInitialized는 서버 전용 플래그다. 클라이언트는 Trait 존재와
+	// 복제된 탄약·재장전 상태로 같은 결론에 도달한다.
+	const AActor* Owner = GetOwner();
+	const bool bInitialized =
+		Owner && Owner->HasAuthority() ? bMagazineInitialized : true;
+	return bInitialized && ResolveMagazineTrait() != nullptr && !bIsReloading &&
+		CurrentMagazineAmmo > 0;
 }
 
 bool UPDWeaponMagazineComponent::CanConsumeRound(FString& OutError) const
@@ -65,7 +82,7 @@ bool UPDWeaponMagazineComponent::CanConsumeRound(FString& OutError) const
 		return false;
 	}
 
-	if (!bMagazineInitialized || !ResolveMagazineDefinition())
+	if (!bMagazineInitialized || !ResolveMagazineTrait())
 	{
 		OutError = TEXT("Item Magazine이 유효한 Definition으로 초기화되지 않았습니다.");
 		return false;
@@ -104,40 +121,58 @@ bool UPDWeaponMagazineComponent::TryStartReload()
 {
 	AActor* Owner = GetOwner();
 	const APDWorldItemActor* Item = Cast<APDWorldItemActor>(Owner);
-	const UPDItemDefinition* Definition = ResolveMagazineDefinition();
+	const UPDItemMagazineTrait* MagazineTrait = ResolveMagazineTrait();
 	UWorld* World = GetWorld();
-	if (!Owner || !Owner->HasAuthority() || !Item || !Definition || !World ||
+	if (!Owner || !Owner->HasAuthority() || !Item || !MagazineTrait || !World ||
 		!bMagazineInitialized || bIsReloading ||
 		Item->GetItemState() != EPDWorldItemState::Held ||
-		CurrentMagazineAmmo >= Definition->Magazine.Capacity)
+		CurrentMagazineAmmo >= MagazineTrait->Capacity)
 	{
 		return false;
 	}
 
+	// 몽타주를 안 넣었으면 대기 없이 바로 채운다. 애니메이션이 아직 없는
+	// 무기도 재장전은 되게 해 둔다.
+	if (!MagazineTrait->ReloadMontage)
+	{
+		CurrentMagazineAmmo = MagazineTrait->Capacity;
+		BroadcastMagazineChanged();
+		ForceOwnerNetUpdate();
+		return true;
+	}
+
 	bIsReloading = true;
-	ReloadEndServerTime = GetSynchronizedWorldTime() + Definition->Magazine.ReloadDuration;
-	World->GetTimerManager().SetTimer(
-		ReloadTimerHandle,
-		this,
-		&UPDWeaponMagazineComponent::CompleteReload,
-		Definition->Magazine.ReloadDuration,
-		false);
+	ReloadEndServerTime = GetSynchronizedWorldTime() +
+		MagazineTrait->GetReloadCompleteTime() / MagazineTrait->ReloadSpeed;
+	if (!PlayReloadMontage())
+	{
+		// Holder가 몽타주를 재생할 수 없으면 재장전을 시작하지 않는다.
+		// 노티파이가 안 오므로 상태만 켜두면 영원히 끝나지 않는다.
+		bIsReloading = false;
+		ReloadEndServerTime = 0.0f;
+		return false;
+	}
+
 	BroadcastReloadStateChanged();
 	ForceOwnerNetUpdate();
 	return true;
 }
 
+bool UPDWeaponMagazineComponent::NotifyReloadComplete()
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || !bIsReloading)
+	{
+		return false;
+	}
+
+	CompleteReload();
+	return true;
+}
+
 bool UPDWeaponMagazineComponent::CancelReload()
 {
-	UWorld* World = GetWorld();
-	if (World)
-	{
-		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
-	}
-	else
-	{
-		ReloadTimerHandle.Invalidate();
-	}
+	StopReloadMontage();
 
 	if (!bIsReloading && ReloadEndServerTime <= 0.0f)
 	{
@@ -146,6 +181,8 @@ bool UPDWeaponMagazineComponent::CancelReload()
 
 	bIsReloading = false;
 	ReloadEndServerTime = 0.0f;
+	++ReloadCancelCounter;
+	ObservedReloadCancelCounter = ReloadCancelCounter;
 	BroadcastReloadStateChanged();
 	ForceOwnerNetUpdate();
 	return true;
@@ -153,8 +190,8 @@ bool UPDWeaponMagazineComponent::CancelReload()
 
 int32 UPDWeaponMagazineComponent::GetMagazineCapacity() const
 {
-	const UPDItemDefinition* Definition = ResolveMagazineDefinition();
-	return Definition ? Definition->Magazine.Capacity : 0;
+	const UPDItemMagazineTrait* MagazineTrait = ResolveMagazineTrait();
+	return MagazineTrait ? MagazineTrait->Capacity : 0;
 }
 
 float UPDWeaponMagazineComponent::GetReloadRemainingTime() const
@@ -182,6 +219,7 @@ void UPDWeaponMagazineComponent::GetLifetimeReplicatedProps(
 		COND_OwnerOnly);
 	DOREPLIFETIME(UPDWeaponMagazineComponent, bIsReloading);
 	DOREPLIFETIME(UPDWeaponMagazineComponent, ReloadEndServerTime);
+	DOREPLIFETIME(UPDWeaponMagazineComponent, ReloadCancelCounter);
 }
 
 void UPDWeaponMagazineComponent::OnRep_CurrentMagazineAmmo()
@@ -191,15 +229,55 @@ void UPDWeaponMagazineComponent::OnRep_CurrentMagazineAmmo()
 
 void UPDWeaponMagazineComponent::OnRep_ReloadState()
 {
+	// 탄약은 서버가 정하고, 클라이언트는 같은 몽타주를 연출로만 맞춘다.
+	// 완료는 몽타주를 끝까지 두고, 취소일 때만 끊는다.
+	if (ObservedReloadCancelCounter != ReloadCancelCounter)
+	{
+		ObservedReloadCancelCounter = ReloadCancelCounter;
+		StopReloadMontage();
+	}
+	else if (bIsReloading)
+	{
+		PlayReloadMontage();
+	}
+
 	BroadcastReloadStateChanged();
 }
 
-const UPDItemDefinition*
-UPDWeaponMagazineComponent::ResolveMagazineDefinition() const
+void UPDWeaponMagazineComponent::OnReloadMontageEnded(
+	UAnimMontage* Montage,
+	bool bInterrupted)
+{
+	if (ActiveReloadMontage.Get() != Montage)
+	{
+		return;
+	}
+
+	ActiveReloadMontage.Reset();
+
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || !bIsReloading)
+	{
+		return;
+	}
+
+	if (bInterrupted)
+	{
+		// 무기 교체나 피격으로 끊겼으면 채우지 않는다.
+		CancelReload();
+		return;
+	}
+
+	// 노티파이를 아직 안 찍은 몽타주는 끝까지 재생된 시점에 채운다.
+	CompleteReload();
+}
+
+const UPDItemMagazineTrait*
+UPDWeaponMagazineComponent::ResolveMagazineTrait() const
 {
 	const APDWorldItemActor* Item = Cast<APDWorldItemActor>(GetOwner());
 	const UPDItemDefinition* Definition = Item ? Item->GetItemDefinition() : nullptr;
-	return Definition && Definition->HasMagazine() ? Definition : nullptr;
+	return Definition ? Definition->FindTrait<UPDItemMagazineTrait>() : nullptr;
 }
 
 float UPDWeaponMagazineComponent::GetSynchronizedWorldTime() const
@@ -216,22 +294,73 @@ float UPDWeaponMagazineComponent::GetSynchronizedWorldTime() const
 		: World->GetTimeSeconds();
 }
 
+UAnimInstance* UPDWeaponMagazineComponent::ResolveHolderAnimInstance() const
+{
+	const APDWorldItemActor* Item = Cast<APDWorldItemActor>(GetOwner());
+	const ACharacter* Holder =
+		Item ? Cast<ACharacter>(Item->GetHolder()) : nullptr;
+	const USkeletalMeshComponent* Mesh = Holder ? Holder->GetMesh() : nullptr;
+	return Mesh ? Mesh->GetAnimInstance() : nullptr;
+}
+
+bool UPDWeaponMagazineComponent::PlayReloadMontage()
+{
+	const UPDItemMagazineTrait* MagazineTrait = ResolveMagazineTrait();
+	UAnimMontage* Montage = MagazineTrait ? MagazineTrait->ReloadMontage : nullptr;
+	UAnimInstance* AnimInstance = ResolveHolderAnimInstance();
+	if (!Montage || !AnimInstance)
+	{
+		return false;
+	}
+
+	if (AnimInstance->Montage_Play(Montage, MagazineTrait->ReloadSpeed) <= 0.0f)
+	{
+		return false;
+	}
+
+	ActiveReloadMontage = Montage;
+
+	FOnMontageEnded EndDelegate;
+	EndDelegate.BindUObject(
+		this,
+		&UPDWeaponMagazineComponent::OnReloadMontageEnded);
+	AnimInstance->Montage_SetEndDelegate(EndDelegate, Montage);
+	return true;
+}
+
+void UPDWeaponMagazineComponent::StopReloadMontage()
+{
+	UAnimMontage* Montage = ActiveReloadMontage.Get();
+	ActiveReloadMontage.Reset();
+	if (!Montage)
+	{
+		return;
+	}
+
+	if (UAnimInstance* AnimInstance = ResolveHolderAnimInstance())
+	{
+		if (AnimInstance->Montage_IsPlaying(Montage))
+		{
+			AnimInstance->Montage_Stop(Montage->BlendOut.GetBlendTime(), Montage);
+		}
+	}
+}
+
 void UPDWeaponMagazineComponent::CompleteReload()
 {
 	AActor* Owner = GetOwner();
 	const APDWorldItemActor* Item = Cast<APDWorldItemActor>(Owner);
-	const UPDItemDefinition* Definition = ResolveMagazineDefinition();
-	if (!Owner || !Owner->HasAuthority() || !Item || !Definition ||
+	const UPDItemMagazineTrait* MagazineTrait = ResolveMagazineTrait();
+	if (!Owner || !Owner->HasAuthority() || !Item || !MagazineTrait ||
 		Item->GetItemState() != EPDWorldItemState::Held)
 	{
 		CancelReload();
 		return;
 	}
 
-	ReloadTimerHandle.Invalidate();
 	bIsReloading = false;
 	ReloadEndServerTime = 0.0f;
-	CurrentMagazineAmmo = Definition->Magazine.Capacity;
+	CurrentMagazineAmmo = MagazineTrait->Capacity;
 	BroadcastMagazineChanged();
 	BroadcastReloadStateChanged();
 	ForceOwnerNetUpdate();

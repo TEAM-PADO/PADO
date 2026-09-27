@@ -50,12 +50,16 @@ protected:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
-	/** 현재 ActionTargeting으로 대상을 다시 수집해 OnExecute를 한 번 실행한다. */
+	/**
+	 * 현재 ActionTargeting으로 대상을 다시 수집해 OnExecute를 한 번 실행한다.
+	 * 대상을 먼저 모으므로 OnExecuteStart가 이번 발이 멈춘 곳을 받는다.
+	 */
 	void ExecutePulse();
 
 	/**
-	 * 새 실행 구간을 열고, 열렸다면 대상을 모으기 전에 OnExecuteStart Hook을 한 번
-	 * 실행한다. 실행 구간에 진입한 모든 경로가 이 진입점을 지난다.
+	 * 새 실행 구간을 열고, 열렸다면 OnExecuteStart Hook을 한 번 실행한다.
+	 * 대상을 시간에 걸쳐 모으는 TraceWindow가 쓴다. 구간이 열리는 순간에는
+	 * 아직 휘두른 결과가 없으므로 이번 발 결과 없이 실행한다.
 	 */
 	bool BeginExecutionWindow();
 
@@ -70,7 +74,9 @@ protected:
 	bool HasActionExecutionStarted() const;
 
 	/** 대상이 없는 시점의 Hook을 소스 자신에게 한 번 실행한다. Hook이 없으면 성공이다. */
-	bool ExecuteSourceHook(FGameplayTag HookTag);
+	bool ExecuteSourceHook(
+		FGameplayTag HookTag,
+		const FHitResult* ShotResult = nullptr);
 
 	void FinishAction(bool bWasCancelled, bool bRunCompleteHook);
 	bool IsFinishingAction() const;
@@ -89,6 +95,12 @@ private:
 	friend class UPDAbilityTask_ActionTraceWindow;
 
 	FPDActionTargetingContext BuildTargetingContext() const;
+
+	/**
+	 * 열린 실행 구간의 OnExecuteStart Hook을 실행한다. 실행 구간에 진입한 모든
+	 * 경로가 이 함수를 지난다. 필수 Fragment가 실패하면 Action을 끝낸다.
+	 */
+	bool RunExecuteStartHook(const FHitResult* ShotResult);
 	bool ExecuteTargets(const TArray<FPDActionTarget>& Targets);
 	APDWorldItemActor* ResolveSourceItem(
 		const FGameplayAbilitySpecHandle Handle,

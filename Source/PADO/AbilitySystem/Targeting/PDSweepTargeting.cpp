@@ -128,7 +128,7 @@ bool UPDSweepTargeting::Validate(FString& OutError) const
 
 void UPDSweepTargeting::GatherTargets(
 	const FPDActionTargetingContext& Context,
-	TArray<FPDActionTarget>& OutTargets) const
+	FPDActionTargetingResult& OutResult) const
 {
 	AActor* SourceActor = Context.SourceActor;
 	UWorld* World = SourceActor ? SourceActor->GetWorld() : nullptr;
@@ -198,7 +198,7 @@ void UPDSweepTargeting::GatherTargets(
 	TSet<AActor*> SeenTargets;
 	for (const FHitResult& HitResult : RawHits)
 	{
-		if (OutTargets.Num() >= MaxTargets)
+		if (OutResult.Targets.Num() >= MaxTargets)
 		{
 			break;
 		}
@@ -213,7 +213,7 @@ void UPDSweepTargeting::GatherTargets(
 		}
 
 		SeenTargets.Add(TargetActor);
-		FPDActionTarget& Target = OutTargets.AddDefaulted_GetRef();
+		FPDActionTarget& Target = OutResult.Targets.AddDefaulted_GetRef();
 		Target.Actor = TargetActor;
 		Target.HitResult = HitResult;
 		Target.bHasHitResult = true;
@@ -221,7 +221,7 @@ void UPDSweepTargeting::GatherTargets(
 
 	if (bDrawDebugSweep)
 	{
-		DrawDebugSweep(*World, Start, End, ShapeRotation, OutTargets);
+		DrawDebugSweep(*World, Start, End, ShapeRotation, OutResult.Targets);
 	}
 }
 

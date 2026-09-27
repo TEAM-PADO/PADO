@@ -19,6 +19,22 @@ struct PADO_API FPDActionTarget
 	bool bHasHitResult = false;
 };
 
+/** Instant Targeting 한 번의 수집 결과다. */
+struct PADO_API FPDActionTargetingResult
+{
+	TArray<FPDActionTarget> Targets;
+
+	/**
+	 * 이번 발이 멈춘 곳이다. 선을 긋는 Targeting만 채운다.
+	 *
+	 * 대상의 HitResult와 달리 명중 여부와 무관하게 매번 있다. 무언가에 막혔으면
+	 * bBlockingHit이 true이고, 빗나갔으면 ImpactPoint가 사거리 끝이다.
+	 * TraceStart와 TraceEnd는 판정 선분 그대로다.
+	 */
+	FHitResult ShotResult;
+	bool bHasShotResult = false;
+};
+
 /** 대상 수집에 필요한 최소 입력이다. GA 구현에 의존하지 않는다. */
 struct PADO_API FPDActionTargetingContext
 {
@@ -48,6 +64,9 @@ public:
 	/** 수집된 FPDActionTarget이 실제 충돌 HitResult를 제공하는 방식인지. */
 	virtual bool ProducesHitResults() const { return false; }
 
+	/** 수집 결과에 이번 발이 멈춘 곳(ShotResult)을 함께 채우는 방식인지. */
+	virtual bool ProducesShotResult() const { return false; }
+
 	/** 활성화가 이벤트로 대상을 넘겨줘야 하는 방식인지 알려 준다. */
 	virtual bool RequiresActivationTarget() const { return false; }
 
@@ -64,7 +83,7 @@ public:
 	/** 대상이 없을 수도 있다. 빗나간 행동도 정상 실행이다. */
 	virtual void GatherTargets(
 		const FPDActionTargetingContext& Context,
-		TArray<FPDActionTarget>& OutTargets) const
+		FPDActionTargetingResult& OutResult) const
 		PURE_VIRTUAL(UPDInstantActionTargeting::GatherTargets, );
 };
 

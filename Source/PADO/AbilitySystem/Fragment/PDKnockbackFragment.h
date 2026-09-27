@@ -26,20 +26,20 @@ public:
 		FString& OutError) const override;
 	virtual bool Execute(const FPDActionExecutionContext& Context) const override;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Knockback")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	float HorizontalSpeed = 950.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Knockback")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	float VerticalSpeed = 350.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Knockback")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	EPDKnockbackDirectionMode DirectionMode =
 		EPDKnockbackDirectionMode::SourceToTarget;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Knockback")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	bool bOverrideHorizontalVelocity = true;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Knockback")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	bool bOverrideVerticalVelocity = true;
 
 private:

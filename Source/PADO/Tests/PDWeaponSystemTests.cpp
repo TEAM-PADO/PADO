@@ -1,8 +1,13 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Animation/AnimMontage.h"
+#include "PADO/Character/PDRecoilComponent.h"
+#include "PADO/Item/Trait/PDItemRecoilTrait.h"
 #include "Misc/AutomationTest.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
 #include "PADO/AbilitySystem/Effect/PDGE_MoveSpeedMultiplier.h"
@@ -12,10 +17,10 @@
 #include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
-#include "PADO/AbilitySystem/Definition/PDChannelActionDefinition.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/AbilitySystem/Struct/PDActionHookStruct.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
+#include "PADO/AbilitySystem/Targeting/PDAimLineTraceTargeting.h"
 #include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
 #include "PADO/Character/PDPlayerCharacter.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
@@ -23,7 +28,9 @@
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
 #include "PADO/Item/Fragment/PDConsumeMagazineAmmoFragment.h"
+#include "PADO/AbilitySystem/Fragment/PDExecuteGameplayCueFragment.h"
 #include "PADO/Item/Tag/PDItemGameplayTags.h"
+#include "PADO/Item/Trait/PDItemMagazineTrait.h"
 #include "PADO/Item/PDWorldItemActor.h"
 #include "TimerManager.h"
 #include "UObject/UObjectGlobals.h"
@@ -43,22 +50,25 @@ namespace PDWeaponSystemTests
 			bAutomatic ? TEXT("Automation Assault Rifle") : TEXT("Automation Sniper Rifle"));
 		Weapon->Presentation.StaticMesh = NewObject<UStaticMesh>(Weapon);
 		Weapon->Presentation.bSimulatePhysicsInWorld = false;
-		Weapon->Magazine.bEnabled = true;
-		Weapon->Magazine.Capacity = MagazineCapacity;
-		Weapon->Magazine.ReloadDuration = 0.01f;
+		UPDItemMagazineTrait* MagazineTrait =
+			NewObject<UPDItemMagazineTrait>(Weapon);
+		MagazineTrait->Capacity = MagazineCapacity;
+		// 몽타주를 넣지 않으면 재장전이 즉시 끝난다. 테스트 World에는 Holder
+		// 스켈레탈 메시가 없어 몽타주를 재생할 수 없으므로 이 경로를 쓴다.
+		Weapon->Traits.Add(MagazineTrait);
 
-		UPDAbilityDefinition* Action = bAutomatic
-			? static_cast<UPDAbilityDefinition*>(
-				NewObject<UPDChannelActionDefinition>(Weapon))
-			: static_cast<UPDAbilityDefinition*>(
-				NewObject<UPDSingleActionDefinition>(Weapon));
+		// 자동 소총도 한 발이 한 활성화다. 누르고 있는 동안 활성화를 다시 여는
+		// 방식이며, 연사 주기는 서버가 강제하는 쿨다운과 같은 값이다.
+		// 이어지는 채널(화염방사기 같은)만 Channel Action을 쓴다.
+		UPDSingleActionDefinition* Action =
+			NewObject<UPDSingleActionDefinition>(Weapon);
 		Action->ActionTargeting = NewObject<UPDSelfTargeting>(Action);
-		if (UPDChannelActionDefinition* Channel =
-			Cast<UPDChannelActionDefinition>(Action))
+		if (bAutomatic)
 		{
-			Channel->ExecutionMode = EPDChannelExecutionMode::FixedInterval;
-			Channel->PulseInterval = 0.1f;
-			Channel->bExecuteImmediately = true;
+			Action->bAutomatic = true;
+			Action->ActionCooldown.CooldownTag =
+				FGameplayTag::RequestGameplayTag(TEXT("Cooldown.Weapon.Fire"));
+			Action->ActionCooldown.Duration = 0.1f;
 		}
 
 		FPDActionHookStruct ConsumeHook;
@@ -68,6 +78,32 @@ namespace PDWeaponSystemTests
 		Action->ActionHooks.Add(MoveTemp(ConsumeHook));
 		Weapon->UseAction = Action;
 		return Weapon;
+	}
+
+	/**
+	 * 타이머와 월드 시간을 함께 진행시킨다.
+	 *
+	 * TimerManager만 돌리면 GameplayEffect 지속시간이 흐르지 않는다. 발사
+	 * 간격을 쿨다운 GE로 강제하므로, 월드 시간을 같이 올리지 않으면 두 번째
+	 * 발사가 영원히 막힌다.
+	 */
+	void AdvanceTestWorld(UWorld* World, float DeltaSeconds)
+	{
+		if (!World)
+		{
+			return;
+		}
+
+		// FTimerManager는 틱 도중에 등록된 타이머를 다음 틱으로 미룬다.
+		// 먼저 빈 틱으로 등록을 반영하지 않으면 방금 건 반복 타이머가
+		// 시작하지 않는다.
+		++GFrameCounter;
+		World->GetTimerManager().Tick(UE_KINDA_SMALL_NUMBER);
+
+		++GFrameCounter;
+		World->TimeSeconds += DeltaSeconds;
+		World->UnpausedTimeSeconds += DeltaSeconds;
+		World->GetTimerManager().Tick(DeltaSeconds);
 	}
 
 	UWorld* CreateTestWorld(FWorldContext*& OutWorldContext)
@@ -153,31 +189,71 @@ bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
 	UPDItemDefinition* SniperAsset = LoadObject<UPDItemDefinition>(
 		nullptr,
 		TEXT("/Game/PADO/Item/Definition/DA_Item_SniperRifle.DA_Item_SniperRifle"));
+	// Trait 전환으로 기존 DA의 탄창 직렬화가 끊겼다. 에디터에서 Trait을 다시
+	// 넣기 전까지는 여기서 실패한다. 실패가 재저작 필요를 알리는 신호다.
 	if (TestNotNull(TEXT("기존 Assault Item DA를 로드한다."), AssaultAsset))
 	{
 		TestTrue(TEXT("실제 Assault Item DA가 유효하다."), AssaultAsset->Validate(Error));
-		TestEqual(TEXT("실제 Assault Item DA 탄창은 30발이다."),
-			AssaultAsset->Magazine.Capacity, 30);
+		const UPDItemMagazineTrait* AssaultMagazine =
+			AssaultAsset->FindTrait<UPDItemMagazineTrait>();
+		if (TestNotNull(TEXT("Assault Item DA에 탄창 Trait이 있다."), AssaultMagazine))
+		{
+			TestEqual(TEXT("실제 Assault Item DA 탄창은 30발이다."),
+				AssaultMagazine->Capacity, 30);
+		}
 	}
 	if (TestNotNull(TEXT("Sniper Item DA를 로드한다."), SniperAsset))
 	{
 		TestTrue(TEXT("실제 Sniper Item DA가 유효하다."), SniperAsset->Validate(Error));
-		TestEqual(TEXT("실제 Sniper Item DA 탄창은 5발이다."),
-			SniperAsset->Magazine.Capacity, 5);
+		const UPDItemMagazineTrait* SniperAssetMagazine =
+			SniperAsset->FindTrait<UPDItemMagazineTrait>();
+		if (TestNotNull(TEXT("Sniper Item DA에 탄창 Trait이 있다."), SniperAssetMagazine))
+		{
+			TestEqual(TEXT("실제 Sniper Item DA 탄창은 5발이다."),
+				SniperAssetMagazine->Capacity, 5);
+		}
 	}
 
-	Sniper->Magazine.Capacity = 0;
+	UPDItemMagazineTrait* SniperMagazine =
+		const_cast<UPDItemMagazineTrait*>(
+			Sniper->FindTrait<UPDItemMagazineTrait>());
+	if (!TestNotNull(TEXT("Sniper에 탄창 Trait이 있다."), SniperMagazine))
+	{
+		return false;
+	}
+
+	SniperMagazine->Capacity = 0;
 	TestFalse(TEXT("0발 탄창은 거부한다."), Sniper->Validate(Error));
-	Sniper->Magazine.Capacity = 5;
+	SniperMagazine->Capacity = 5;
+
+	// ReloadSpeed가 0이면 몽타주가 진행하지 않아 재장전이 끝나지 않는다.
+	SniperMagazine->ReloadSpeed = 0.0f;
+	TestFalse(TEXT("0 이하 ReloadSpeed는 거부한다."), Sniper->Validate(Error));
+	SniperMagazine->ReloadSpeed = 1.0f;
+
+	// 몽타주가 없으면 즉시 장전이므로 충전 시각도 0이다.
+	TestEqual(TEXT("몽타주가 없으면 충전 시각은 0이다."),
+		SniperMagazine->GetReloadCompleteTime(), 0.0f);
+
+	// 같은 Trait이 둘이면 하나가 조용히 무시되므로 저작 단계에서 막는다.
+	UPDItemMagazineTrait* DuplicateMagazine =
+		NewObject<UPDItemMagazineTrait>(Sniper);
+	Sniper->Traits.Add(DuplicateMagazine);
+	TestFalse(TEXT("같은 Trait이 중복되면 거부한다."), Sniper->Validate(Error));
+	Sniper->Traits.Pop();
+	TestTrue(TEXT("중복을 제거하면 다시 유효하다."), Sniper->Validate(Error));
 	// 탄약 소비 Fragment 배치는 제작자 재량이다. 없으면 탄약을 소비하지 않을
 	// 뿐 게임은 동작하므로 Definition 검증에서 막지 않는다.
 	Sniper->UseAction->ActionHooks.Reset();
 	TestTrue(
 		TEXT("탄약 소비 Fragment가 없어도 Magazine Item Definition은 유효하다."),
 		Sniper->Validate(Error));
-	Sniper->Magazine.bEnabled = false;
-	TestTrue(TEXT("탄창이 비활성화된 일반 아이템은 같은 Definition으로 유효하다."),
+	// Trait을 빼면 탄창 없는 일반 아이템이 된다.
+	Sniper->Traits.Reset();
+	TestTrue(TEXT("Trait을 제거한 일반 아이템도 유효하다."),
 		Sniper->Validate(Error));
+	TestNull(TEXT("제거 후에는 탄창 Trait이 조회되지 않는다."),
+		Sniper->FindTrait<UPDItemMagazineTrait>());
 	return true;
 }
 
@@ -225,26 +301,39 @@ bool FPDWeaponMagazineLifecycleTest::RunTest(const FString& Parameters)
 		Weapon->DispatchBeginPlay();
 		TestTrue(TEXT("Holder가 Weapon을 줍는다."),
 			Holder->GetHeldItemComponent()->TryPickUp(Weapon));
+
+		// 몽타주가 없는 무기는 대기 없이 채운다.
 		TestTrue(TEXT("빈 탄창에서 재장전을 시작한다."),
 			Magazine->TryStartReload());
-		TestTrue(TEXT("재장전 상태가 활성화된다."), Magazine->IsReloading());
-
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.02f);
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.02f);
-		TestFalse(TEXT("재장전 타이머 완료 후 상태를 해제한다."),
+		TestFalse(TEXT("몽타주가 없으면 재장전 상태로 머물지 않는다."),
 			Magazine->IsReloading());
-		TestEqual(TEXT("재장전 완료 시 탄창을 최대치로 채운다."),
+		TestEqual(TEXT("몽타주가 없으면 즉시 탄창을 최대치로 채운다."),
 			Magazine->GetCurrentMagazineAmmo(), 5);
-
-		TestTrue(TEXT("재장전 검증을 위해 한 발 소비한다."),
-			Magazine->TryConsumeRound());
-		TestTrue(TEXT("부분 탄창에서 재장전을 시작한다."),
+		TestFalse(TEXT("가득 찬 탄창은 재장전을 거부한다."),
 			Magazine->TryStartReload());
-		TestTrue(TEXT("재장전 중 Weapon을 드롭한다."),
+
+		// 몽타주를 넣으면 충전 시점을 노티파이가 정한다. 이 World의 Holder는
+		// AnimInstance가 없어 재생할 수 없으므로 시작 자체를 거부해야 한다.
+		// 상태만 켜두면 노티파이가 오지 않아 영원히 재장전 중이 된다.
+		UPDItemMagazineTrait* MagazineTrait =
+			const_cast<UPDItemMagazineTrait*>(
+				Definition->FindTrait<UPDItemMagazineTrait>());
+		if (TestNotNull(TEXT("Definition에서 탄창 Trait을 찾는다."), MagazineTrait))
+		{
+			TestTrue(TEXT("재장전 검증을 위해 한 발 소비한다."),
+				Magazine->TryConsumeRound());
+			MagazineTrait->ReloadMontage = NewObject<UAnimMontage>(Definition);
+			TestFalse(TEXT("몽타주를 재생할 수 없으면 재장전을 시작하지 않는다."),
+				Magazine->TryStartReload());
+			TestFalse(TEXT("시작하지 못한 재장전은 상태를 남기지 않는다."),
+				Magazine->IsReloading());
+			TestEqual(TEXT("시작하지 못하면 탄창도 그대로다."),
+				Magazine->GetCurrentMagazineAmmo(), 4);
+			MagazineTrait->ReloadMontage = nullptr;
+		}
+
+		TestTrue(TEXT("Weapon을 드롭한다."),
 			Holder->GetHeldItemComponent()->DropHeldItem(FTransform::Identity));
-		TestFalse(TEXT("드롭 시 재장전을 취소한다."), Magazine->IsReloading());
 		TestEqual(TEXT("드롭해도 부분 탄창을 보존한다."),
 			Magazine->GetCurrentMagazineAmmo(), 4);
 
@@ -303,21 +392,36 @@ bool FPDWeaponInputFiringTest::RunTest(const FString& Parameters)
 		Assault->DispatchBeginPlay();
 		TestTrue(TEXT("연사 무기를 줍는다."), HeldItems->TryPickUp(Assault));
 		UPDWeaponMagazineComponent* Magazine = Assault->GetMagazineComponent();
+
+		// 자동 발사는 클라이언트가 간격마다 활성화를 다시 여는 방식이다.
+		// 한 발이 한 활성화라서 발사마다 신호가 하나씩 나간다.
+		int32 LocalShotCount = 0;
+		FDelegateHandle ShotHandle = HeldItems->OnLocalShotFired.AddLambda(
+			[&LocalShotCount](APDWorldItemActor*) { ++LocalShotCount; });
+
 		TestTrue(TEXT("연사 입력을 누른다."), HeldItems->PressHeldItemUse());
+		TestEqual(TEXT("누르는 즉시 첫 발사 신호가 나간다."), LocalShotCount, 1);
 		TestEqual(TEXT("Press 직후 첫 발을 소비한다."),
 			Magazine->GetCurrentMagazineAmmo(), 1);
 
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.11f);
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.11f);
+		AdvanceTestWorld(TestWorld, 0.11f);
+		TestEqual(TEXT("누름 유지 시 두 번째 발사 신호가 나간다."),
+			LocalShotCount, 2);
 		TestEqual(TEXT("누름 유지 시 두 번째 발을 소비한다."),
 			Magazine->GetCurrentMagazineAmmo(), 0);
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.11f);
-		TestEqual(TEXT("빈 탄창에서는 추가 연사하지 않는다."),
+
+		AdvanceTestWorld(TestWorld, 0.11f);
+		// 빈 탄창은 활성화 자체가 거부된다. 탄약 판정을 Fragment 하나에 두고
+		// 양쪽이 같이 보므로, 나가지 않을 발사에 연출이나 반동이 붙지 않는다.
+		TestEqual(TEXT("빈 탄창에서는 발사 신호가 나가지 않는다."),
+			LocalShotCount, 2);
+		TestEqual(TEXT("빈 탄창에서는 탄약이 더 줄지 않는다."),
 			Magazine->GetCurrentMagazineAmmo(), 0);
+
 		HeldItems->ReleaseHeldItemUse();
+		HeldItems->OnLocalShotFired.Remove(ShotHandle);
+		AdvanceTestWorld(TestWorld, 0.11f);
+		TestEqual(TEXT("입력을 떼면 반복이 멈춘다."), LocalShotCount, 2);
 		TestTrue(TEXT("연사 무기를 드롭한다."),
 			HeldItems->DropHeldItem(FTransform::Identity));
 	}
@@ -333,9 +437,8 @@ bool FPDWeaponInputFiringTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("단발 입력을 누른다."), HeldItems->PressHeldItemUse());
 		TestEqual(TEXT("Press 한 번에 한 발만 소비한다."),
 			Magazine->GetCurrentMagazineAmmo(), 4);
-		++GFrameCounter;
-		TestWorld->GetTimerManager().Tick(0.25f);
-		TestEqual(TEXT("누름 유지 중 추가 발사는 없다."),
+		AdvanceTestWorld(TestWorld, 0.25f);
+		TestEqual(TEXT("자동이 아니면 누름 유지 중 추가 발사는 없다."),
 			Magazine->GetCurrentMagazineAmmo(), 4);
 		HeldItems->ReleaseHeldItemUse();
 		TestTrue(TEXT("두 번째 단발 입력을 누른다."),
@@ -461,6 +564,60 @@ bool FPDItemInteractionInputTest::RunTest(const FString& Parameters)
 		Holder->FindNearestPickupCandidate());
 
 	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDGameplayCueTagTest,
+	"PADO.Item.Weapon.GameplayCueTags",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDGameplayCueTagTest::RunTest(const FString& Parameters)
+{
+	// Fragment의 Validate가 이 루트 태그를 요구한다. 자식 태그를 등록하면
+	// 부모가 자동 생성되므로 별도 선언 없이도 유효해야 한다.
+	const FGameplayTag CueRoot =
+		FGameplayTag::RequestGameplayTag(TEXT("GameplayCue"), false);
+	TestTrue(TEXT("GameplayCue 루트 태그가 존재한다."), CueRoot.IsValid());
+
+	// Config/DefaultGameplayTags.ini에 선언한 태그다. 네이티브가 아니므로
+	// ini가 실제로 로드됐는지까지 여기서 확인한다.
+	const TCHAR* WeaponCueNames[] = {
+		TEXT("GameplayCue.Weapon.AssaultRifle.Fire"),
+		TEXT("GameplayCue.Weapon.SniperRifle.Fire"),
+		TEXT("GameplayCue.Weapon.Impact.Default")
+	};
+
+	for (const TCHAR* CueName : WeaponCueNames)
+	{
+		const FGameplayTag CueTag =
+			FGameplayTag::RequestGameplayTag(FName(CueName), false);
+		if (!TestTrue(
+			FString::Printf(TEXT("'%s'가 등록되어 있다."), CueName),
+			CueTag.IsValid()))
+		{
+			continue;
+		}
+		TestTrue(
+			FString::Printf(TEXT("'%s'가 GameplayCue 하위다."), CueName),
+			CueTag.MatchesTag(CueRoot));
+	}
+
+	// Fragment는 GameplayCue 하위가 아닌 태그를 거부해야 한다.
+	UPDExecuteGameplayCueFragment* Fragment =
+		NewObject<UPDExecuteGameplayCueFragment>(GetTransientPackage());
+	FString Error;
+	Fragment->CueTag = FGameplayTag();
+	TestFalse(TEXT("빈 CueTag는 거부한다."), Fragment->Validate(Error));
+
+	Fragment->CueTag = TAG_PD_Item_Id_Weapon_AssaultRifle;
+	TestFalse(TEXT("GameplayCue 하위가 아닌 태그는 거부한다."),
+		Fragment->Validate(Error));
+
+	Fragment->CueTag = FGameplayTag::RequestGameplayTag(
+		TEXT("GameplayCue.Weapon.AssaultRifle.Fire"), false);
+	TestTrue(TEXT("무기 발사 Cue 태그는 통과한다."), Fragment->Validate(Error));
+
 	return true;
 }
 
@@ -761,6 +918,223 @@ bool FPDMovementStancePredictionTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("스프린트 여부가 다른 이동은 합치지 않는다."),
 		WalkMove->CanCombineWith(SprintMove, Holder, 0.05f));
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDWeaponRecoilTraitTest,
+	"PADO.Item.Weapon.Recoil.Trait",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDWeaponRecoilTraitTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	UPDItemDefinition* Weapon = NewObject<UPDItemDefinition>();
+	Weapon->ItemId = TAG_PD_Item_Id_Weapon_AssaultRifle;
+	Weapon->Presentation.StaticMesh = NewObject<UStaticMesh>(Weapon);
+	Weapon->Presentation.bSimulatePhysicsInWorld = false;
+
+	UPDItemRecoilTrait* Recoil = NewObject<UPDItemRecoilTrait>(Weapon);
+	Weapon->Traits.Add(Recoil);
+
+	FString Error;
+	TestTrue(TEXT("기본 반동 설정은 유효하다."), Weapon->Validate(Error));
+	// 기존 무기 DA는 이 값을 저장한 적이 없다. 기본값이 곧 기존 동작이다.
+	TestTrue(TEXT("복원은 기본으로 켜져 있다."), Recoil->bEnableRecovery);
+
+	// 범위가 뒤집히면 좌우 반동이 한쪽으로만 나가 저작 의도와 달라진다.
+	Recoil->YawPerShotMin = 1.0f;
+	Recoil->YawPerShotMax = -1.0f;
+	TestFalse(TEXT("좌우 반동 범위가 뒤집히면 거부한다."), Weapon->Validate(Error));
+	Recoil->YawPerShotMin = -0.4f;
+	Recoil->YawPerShotMax = 0.4f;
+	TestTrue(TEXT("범위를 되돌리면 다시 유효하다."), Weapon->Validate(Error));
+
+	// NaN은 컨트롤 회전까지 그대로 전파된다.
+	Recoil->PitchPerShot = FMath::Sqrt(-1.0f);
+	TestFalse(TEXT("유한하지 않은 반동 수치는 거부한다."), Weapon->Validate(Error));
+	Recoil->PitchPerShot = 1.2f;
+
+	// 커브를 안 꽂으면 매 발 같은 배율이다. 나중에 커브만 넣으면 패턴이 된다.
+	TestEqual(TEXT("커브가 없으면 첫 발 배율은 1이다."),
+		Recoil->GetSprayMultiplier(0), 1.0f);
+	TestEqual(TEXT("커브가 없으면 열 번째 발도 배율 1이다."),
+		Recoil->GetSprayMultiplier(9), 1.0f);
+
+	// 반동은 선택 기능이다. Trait을 빼면 값 자체가 없다.
+	Weapon->Traits.Reset();
+	TestNull(TEXT("Trait을 빼면 반동 설정이 조회되지 않는다."),
+		Weapon->FindTrait<UPDItemRecoilTrait>());
+	TestTrue(TEXT("반동 없는 아이템도 유효하다."), Weapon->Validate(Error));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDWeaponRecoilComponentTest,
+	"PADO.Item.Weapon.Recoil.LocalOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDWeaponRecoilComponentTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("반동 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
+		TestNotNull(TEXT("Weapon을 스폰한다."), Weapon))
+	{
+		UPDRecoilComponent* RecoilComponent = Holder->GetRecoilComponent();
+		if (TestNotNull(TEXT("캐릭터에 반동 컴포넌트가 있다."), RecoilComponent))
+		{
+			Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(
+				Holder,
+				Holder);
+			TestTrue(TEXT("Holder 손 소켓을 구성한다."),
+				ConfigureHolderSocket(Holder));
+			UPDItemDefinition* Definition =
+				MakeMagazineItemDefinition(Weapon, 5, true);
+			Definition->Traits.Add(NewObject<UPDItemRecoilTrait>(Definition));
+			TestTrue(TEXT("반동 무기를 초기화한다."),
+				Weapon->InitializeItem(Definition));
+
+			// 이 World의 Holder는 로컬 조종 Controller가 없다. 반동은 컨트롤
+			// 회전 조작이라 그 경우 아무것도 하지 않아야 한다. 서버나 시뮬레이션
+			// 프록시에서 돌면 남의 시점을 흔들게 된다.
+			Weapon->DispatchBeginPlay();
+			TestTrue(TEXT("반동 무기를 줍는다."),
+				Holder->GetHeldItemComponent()->TryPickUp(Weapon));
+			Holder->GetHeldItemComponent()->PressHeldItemUse();
+			TestFalse(TEXT("로컬 조종이 아니면 반동이 쌓이지 않는다."),
+				RecoilComponent->HasActiveRecoil());
+			Holder->GetHeldItemComponent()->ReleaseHeldItemUse();
+		}
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDShotResultContractTest,
+	"PADO.Item.Weapon.ShotResult.Contract",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDShotResultContractTest::RunTest(const FString& Parameters)
+{
+	UPDSingleActionDefinition* Action = NewObject<UPDSingleActionDefinition>();
+	Action->ActionTargeting = NewObject<UPDAimLineTraceTargeting>(Action);
+
+	UPDExecuteGameplayCueFragment* Tracer =
+		NewObject<UPDExecuteGameplayCueFragment>(Action);
+	Tracer->CueTag = FGameplayTag::RequestGameplayTag(
+		TEXT("GameplayCue.Weapon.AssaultRifle.Fire"), false);
+	Tracer->ApplicationScope = EPDActionScope::Source;
+	Tracer->bPlayAtShotEnd = true;
+
+	FPDActionHookStruct Hook;
+	Hook.HookTag = TAG_PD_ActionHook_OnExecuteStart;
+	Hook.Fragments.Add(Tracer);
+	Action->ActionHooks.Add(MoveTemp(Hook));
+
+	FString Error;
+	TestTrue(TEXT("선을 긋는 Targeting의 OnExecuteStart에서는 이번 발 결과를 쓸 수 있다."),
+		Action->ValidateWithActionContract(Error));
+
+	// 결과는 OnExecuteStart에만 온다. 다른 Hook에 두면 조용히 재생되지 않는다.
+	Action->ActionHooks[0].HookTag = TAG_PD_ActionHook_OnExecute;
+	TestFalse(TEXT("OnExecuteStart가 아닌 Hook에 두면 거부한다."),
+		Action->ValidateWithActionContract(Error));
+	Action->ActionHooks[0].HookTag = TAG_PD_ActionHook_OnExecuteStart;
+
+	Action->ActionTargeting = NewObject<UPDSelfTargeting>(Action);
+	TestFalse(TEXT("결과를 만들지 않는 Targeting이면 거부한다."),
+		Action->ValidateWithActionContract(Error));
+
+	// 소켓으로 위치를 덮으면 멈춘 곳이 사라진다.
+	Tracer->ItemSocketName = TEXT("Muzzle");
+	TestFalse(TEXT("ItemSocketName과 함께 쓰면 거부한다."), Tracer->Validate(Error));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDAimLineTraceShotResultTest,
+	"PADO.Item.Weapon.ShotResult.AimLineTrace",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDAimLineTraceShotResultTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("판정 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	// 컨트롤러가 없으면 눈높이에서 Actor 정면(+X)으로 쏜다.
+	APDPlayerCharacter* Shooter = TestWorld->SpawnActor<APDPlayerCharacter>();
+	UPDAimLineTraceTargeting* Targeting =
+		NewObject<UPDAimLineTraceTargeting>(GetTransientPackage());
+	Targeting->TraceDistance = 1000.0f;
+	if (TestNotNull(TEXT("사수를 스폰한다."), Shooter))
+	{
+		FPDActionTargetingContext Context;
+		Context.SourceActor = Shooter;
+
+		FPDActionTargetingResult Miss;
+		Targeting->GatherTargets(Context, Miss);
+		TestTrue(TEXT("빗나가도 이번 발 결과가 있다."), Miss.bHasShotResult);
+		TestFalse(TEXT("빗나간 탄은 막히지 않았다."), Miss.ShotResult.bBlockingHit);
+		TestEqual(TEXT("빗나간 탄은 사거리 끝에서 멈춘다."),
+			Miss.ShotResult.ImpactPoint, Miss.ShotResult.TraceEnd);
+		TestEqual(TEXT("사거리는 TraceDistance다."),
+			FVector::Dist(Miss.ShotResult.TraceStart, Miss.ShotResult.TraceEnd),
+			1000.0, 1.0);
+
+		// 1단계 판정이 벽을 맞히면 끝점이 벽 표면 위에 온다. 그래도 벽에서
+		// 멈춰야 한다. 표면에서 딱 끝나는 판정은 오차로 벽을 놓칠 수 있다.
+		AActor* Wall = TestWorld->SpawnActor<AActor>();
+		UBoxComponent* WallBox = NewObject<UBoxComponent>(Wall);
+		WallBox->SetBoxExtent(FVector(10.0f, 300.0f, 300.0f));
+		WallBox->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+		WallBox->SetWorldLocation(FVector(500.0f, 0.0f, 0.0f));
+		Wall->SetRootComponent(WallBox);
+		WallBox->RegisterComponent();
+
+		FPDActionTargetingResult WallHit;
+		Targeting->GatherTargets(Context, WallHit);
+		TestTrue(TEXT("벽에 쏜 탄은 막힌다."), WallHit.ShotResult.bBlockingHit);
+		TestTrue(TEXT("벽에서 멈춘다."), WallHit.ShotResult.GetActor() == Wall);
+		TestEqual(TEXT("벽 앞면에서 멈춘다."),
+			WallHit.ShotResult.ImpactPoint.X, 490.0, 1.0);
+		TestEqual(TEXT("벽은 대상이 아니다."), WallHit.Targets.Num(), 0);
+
+		// 벽 앞 대상에 맞으면 대상에서 멈춘다. 대상을 지나 벽까지 가지 않는다.
+		APDPlayerCharacter* Target = TestWorld->SpawnActor<APDPlayerCharacter>(
+			FVector(300.0f, 0.0f, 0.0f),
+			FRotator::ZeroRotator);
+		if (TestNotNull(TEXT("대상을 스폰한다."), Target))
+		{
+			FPDActionTargetingResult TargetHit;
+			Targeting->GatherTargets(Context, TargetHit);
+			TestEqual(TEXT("대상 하나를 맞힌다."), TargetHit.Targets.Num(), 1);
+			TestTrue(TEXT("대상에 맞은 탄도 막힌 것이다."),
+				TargetHit.ShotResult.bBlockingHit);
+			TestTrue(TEXT("대상에서 멈춘다."),
+				TargetHit.ShotResult.GetActor() == Target);
+			TestTrue(TEXT("벽보다 앞에서 멈춘다."),
+				TargetHit.ShotResult.ImpactPoint.X < 490.0);
+		}
+	}
 
 	DestroyTestWorld(TestWorld);
 	return true;

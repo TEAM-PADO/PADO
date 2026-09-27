@@ -73,11 +73,13 @@ protected:
 	void AddRequiredActionHook(FGameplayTag HookTag);
 
 
+	/** ShotResult는 이번 발이 멈춘 곳이다. OnExecuteStart만 넘긴다. */
 	bool ExecuteActionHook(
 		FGameplayTag HookTag,
 		UAbilitySystemComponent* TargetAbilitySystem,
 		AActor* TargetActor,
-		const FHitResult* HitResult = nullptr);
+		const FHitResult* HitResult = nullptr,
+		const FHitResult* ShotResult = nullptr);
 
 	const UPDAbilityDefinition* GetActiveDefinition() const;
 	void SetExecutionChargeAlpha(float ChargeAlpha);

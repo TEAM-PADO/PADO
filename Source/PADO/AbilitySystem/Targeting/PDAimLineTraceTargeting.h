@@ -25,9 +25,10 @@ public:
 
 	virtual bool Validate(FString& OutError) const override;
 	virtual bool ProducesHitResults() const override { return true; }
+	virtual bool ProducesShotResult() const override { return true; }
 	virtual void GatherTargets(
 		const FPDActionTargetingContext& Context,
-		TArray<FPDActionTarget>& OutTargets) const override;
+		FPDActionTargetingResult& OutResult) const override;
 
 	/** 아래 맵에 없는 조준 단계는 이 값을 쓴다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Trace")

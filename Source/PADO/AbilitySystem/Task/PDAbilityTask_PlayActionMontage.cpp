@@ -84,21 +84,8 @@ void UPDAbilityTask_PlayActionMontage::Activate()
 		&UPDAbilityTask_PlayActionMontage::HandleMontageInterrupted);
 	MontageTask->ReadyForActivation();
 
-	if (bTerminal)
-	{
-		return;
-	}
-
-	if (UPDAbilitySystemComponent* AbilitySystem =
-		Cast<UPDAbilitySystemComponent>(
-			Ability->GetAbilitySystemComponentFromActorInfo()))
-	{
-		AbilitySystem->PlayActionMontageForRemoteOwner(
-			AbilityHandle,
-			Montage,
-			PlayRate,
-			StartSection);
-	}
+	// 소유 클라이언트에게 몽타주를 따로 보내지 않는다. LocalPredicted 어빌리티가
+	// 클라이언트에서도 이 Task를 돌려 직접 재생한다.
 }
 
 bool UPDAbilityTask_PlayActionMontage::CanApplyHitLag() const
@@ -149,7 +136,6 @@ bool UPDAbilityTask_PlayActionMontage::ApplyHitLag(
 		Cast<UPDAbilitySystemComponent>(AbilitySystem))
 	{
 		PDAbilitySystem->ApplyActionMontageHitLagForRemoteOwner(
-			AbilityHandle,
 			Montage,
 			EffectivePlayRate,
 			HitLag.Duration,
@@ -217,14 +203,7 @@ void UPDAbilityTask_PlayActionMontage::OnDestroy(bool bAbilityEnded)
 		}
 	}
 
-	if (UPDAbilitySystemComponent* PDAbilitySystem =
-		Cast<UPDAbilitySystemComponent>(AbilitySystem))
-	{
-		PDAbilitySystem->StopActionMontageForRemoteOwner(
-			AbilityHandle,
-			Montage);
-	}
-
+	// 소유 클라이언트의 몽타주는 그쪽 Task가 스스로 정리한다.
 	EventTask = nullptr;
 	MontageTask = nullptr;
 	Super::OnDestroy(bAbilityEnded);

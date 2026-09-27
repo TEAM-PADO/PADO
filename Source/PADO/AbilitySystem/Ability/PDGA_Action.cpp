@@ -11,7 +11,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPDSingleAction, Log, All);
 
 UPDGA_Action::UPDGA_Action()
 {
-	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 }
 
 void UPDGA_Action::ActivateAbility(

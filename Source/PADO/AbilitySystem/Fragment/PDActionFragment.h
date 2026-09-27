@@ -20,10 +20,37 @@ public:
 		FGameplayTagContainer& OutTags) const;
 	/** Ability 실행이 끝난 뒤 별도 Runtime Actor에서도 안전하게 실행할 수 있는가. */
 	virtual bool SupportsDeferredExecution() const;
+
+	/**
+	 * 소유 클라이언트가 서버 확정 전에 미리 실행해도 되는가.
+	 *
+	 * 기본은 아니다. 게임 상태를 바꾸는 Fragment는 서버만 실행해야 한다.
+	 * 서버가 거부하면 되돌릴 방법이 없기 때문이다. 총구 화염처럼 되돌릴
+	 * 필요가 없는 연출만 예측한다.
+	 */
+	virtual bool SupportsLocalPrediction() const;
+
+	/**
+	 * 이번 발이 멈춘 곳(ShotResult)이 있어야 동작하는가.
+	 * 그런 Fragment는 OnExecuteStart에만 둘 수 있고, 결과를 만드는 Targeting이
+	 * 필요하다. Definition 검증이 이 둘을 확인한다.
+	 */
+	virtual bool RequiresShotResult() const;
 	/** Runtime Actor가 지연 실행에 필요한 상태를 발사 시점에 캡처한다. */
 	virtual bool PrepareDeferredExecution(
 		const FPDActionExecutionContext& Context,
 		FString& OutError);
+	/**
+	 * 활성화 전에 평가하는 전제 조건이다. 복제된 상태만 본다.
+	 *
+	 * 서버와 소유 클라이언트가 같은 결론에 도달해야 헛예측이 줄어든다. 그래서
+	 * 판정은 이 함수 하나에만 두고 양쪽이 같이 부른다. 대상은 아직 정해지지
+	 * 않았으므로 Source 기준으로만 판단한다.
+	 */
+	virtual bool CanActivateWithPredictedState(
+		const FPDActionExecutionContext& Context,
+		FString& OutError) const;
+
 	virtual bool CanExecute(
 		const FPDActionExecutionContext& Context,
 		FString& OutError) const;

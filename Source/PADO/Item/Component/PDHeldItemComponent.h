@@ -8,7 +8,13 @@
 
 class APDWorldItemActor;
 class UPDItemDefinition;
+class UPDSingleActionDefinition;
 class USceneComponent;
+
+/** 자동 발사가 한 발 나갈 때마다 로컬에서 브로드캐스트한다. 반동·연출이 구독한다. */
+DECLARE_MULTICAST_DELEGATE_OneParam(
+	FPDHeldItemFiredSignature,
+	APDWorldItemActor*);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FPDHeldItemChangedSignature,
@@ -64,6 +70,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "PD|Item")
 	bool ReleaseHeldItemUse();
+
+	/**
+	 * 로컬에서 한 발을 보낸 순간 발생한다. 서버 확정을 기다리지 않는다.
+	 *
+	 * 자동 발사는 클라이언트가 간격을 돌리고 서버가 쿨다운으로 강제하므로,
+	 * 발사마다 이 신호가 한 번씩 나간다.
+	 */
+	FPDHeldItemFiredSignature OnLocalShotFired;
 
 	/** 로컬 입력 의도를 서버로 보내 현재 Reloadable Held Item의 재장전을 요청한다. */
 	UFUNCTION(BlueprintCallable, Category = "PD|Item")
@@ -166,6 +180,15 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<USceneComponent> RuntimeAttachmentComponent;
+
+	/** 자동 발사 무기를 누르고 있는 동안 간격마다 다시 쏜다. */
+	void HandleAutomaticFire();
+	bool SendShot(APDWorldItemActor* Item);
+
+	/** 자동이 아니면 0을 돌려준다. */
+	float ResolveAutomaticFireInterval(const APDWorldItemActor* Item) const;
+
+	FTimerHandle AutomaticFireTimerHandle;
 
 	/** Press 당시의 아이템이다. Release가 이후에 든 다른 아이템으로 새지 않게 한다. */
 	UPROPERTY(Transient)

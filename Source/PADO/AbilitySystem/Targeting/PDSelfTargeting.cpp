@@ -4,13 +4,13 @@
 
 void UPDSelfTargeting::GatherTargets(
 	const FPDActionTargetingContext& Context,
-	TArray<FPDActionTarget>& OutTargets) const
+	FPDActionTargetingResult& OutResult) const
 {
 	if (!IsValid(Context.SourceActor))
 	{
 		return;
 	}
 
-	FPDActionTarget& Target = OutTargets.AddDefaulted_GetRef();
+	FPDActionTarget& Target = OutResult.Targets.AddDefaulted_GetRef();
 	Target.Actor = Context.SourceActor;
 }

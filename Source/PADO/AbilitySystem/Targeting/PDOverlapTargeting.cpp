@@ -37,7 +37,7 @@ UPrimitiveComponent* UPDOverlapTargeting::ResolveOverlapComponent(
 
 void UPDOverlapTargeting::GatherTargets(
 	const FPDActionTargetingContext& Context,
-	TArray<FPDActionTarget>& OutTargets) const
+	FPDActionTargetingResult& OutResult) const
 {
 	AActor* SourceActor = Context.SourceActor;
 	if (!IsValid(SourceActor))
@@ -61,7 +61,7 @@ void UPDOverlapTargeting::GatherTargets(
 
 	for (AActor* Candidate : OverlappingActors)
 	{
-		if (OutTargets.Num() >= MaxTargets)
+		if (OutResult.Targets.Num() >= MaxTargets)
 		{
 			break;
 		}
@@ -83,7 +83,7 @@ void UPDOverlapTargeting::GatherTargets(
 			continue;
 		}
 
-		FPDActionTarget& Target = OutTargets.AddDefaulted_GetRef();
+		FPDActionTarget& Target = OutResult.Targets.AddDefaulted_GetRef();
 		Target.Actor = Candidate;
 	}
 }

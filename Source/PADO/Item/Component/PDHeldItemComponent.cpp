@@ -4,9 +4,11 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
+#include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
-#include "PADO/Item/PDWorldItemActor.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
+#include "PADO/Item/PDWorldItemActor.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDHeldItemComponent, Log, All);
 
@@ -164,11 +166,24 @@ bool UPDHeldItemComponent::PressHeldItemUse()
 	}
 
 	InputPressedItem = HeldItem;
-	if (!HeldItem->PressUse(InputPressedAbilityHandle))
+	if (!SendShot(HeldItem))
 	{
 		InputPressedItem = nullptr;
 		InputPressedAbilityHandle = FGameplayAbilitySpecHandle();
 		return false;
+	}
+
+	// 자동 발사는 누르고 있는 동안 활성화를 다시 연다. 한 발이 한 활성화라서
+	// 발사마다 예측 ID가 생기고 연출과 반동을 그 단위로 걸 수 있다.
+	const float FireInterval = ResolveAutomaticFireInterval(HeldItem);
+	if (UWorld* World = GetWorld(); World && FireInterval > 0.0f)
+	{
+		World->GetTimerManager().SetTimer(
+			AutomaticFireTimerHandle,
+			this,
+			&UPDHeldItemComponent::HandleAutomaticFire,
+			FireInterval,
+			true);
 	}
 
 	return true;
@@ -176,11 +191,57 @@ bool UPDHeldItemComponent::PressHeldItemUse()
 
 bool UPDHeldItemComponent::ReleaseHeldItemUse()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutomaticFireTimerHandle);
+	}
+	else
+	{
+		AutomaticFireTimerHandle.Invalidate();
+	}
+
 	APDWorldItemActor* PressedItem = InputPressedItem.Get();
 	const FGameplayAbilitySpecHandle PressedHandle = InputPressedAbilityHandle;
 	InputPressedItem = nullptr;
 	InputPressedAbilityHandle = FGameplayAbilitySpecHandle();
 	return IsValid(PressedItem) && PressedItem->ReleaseUse(PressedHandle);
+}
+
+void UPDHeldItemComponent::HandleAutomaticFire()
+{
+	APDWorldItemActor* PressedItem = InputPressedItem.Get();
+
+	// 발사 중에 아이템을 놓거나 바꿨으면 멈춘다.
+	if (!IsValid(PressedItem) || PressedItem != HeldItem)
+	{
+		ReleaseHeldItemUse();
+		return;
+	}
+
+	SendShot(PressedItem);
+}
+
+bool UPDHeldItemComponent::SendShot(APDWorldItemActor* Item)
+{
+	if (!IsValid(Item) || !Item->PressUse(InputPressedAbilityHandle))
+	{
+		return false;
+	}
+
+	// 서버가 탄약·재장전·쿨다운으로 거부할 수 있다. 여기서는 "보냈다"만 알린다.
+	OnLocalShotFired.Broadcast(Item);
+	return true;
+}
+
+float UPDHeldItemComponent::ResolveAutomaticFireInterval(
+	const APDWorldItemActor* Item) const
+{
+	const UPDItemDefinition* Definition =
+		IsValid(Item) ? Item->GetItemDefinition() : nullptr;
+	const UPDSingleActionDefinition* SingleAction = Definition
+		? Cast<UPDSingleActionDefinition>(Definition->UseAction)
+		: nullptr;
+	return SingleAction ? SingleAction->GetAutomaticFireInterval() : 0.0f;
 }
 
 bool UPDHeldItemComponent::TryReloadHeldItem()

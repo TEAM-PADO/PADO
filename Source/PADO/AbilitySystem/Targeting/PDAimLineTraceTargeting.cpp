@@ -12,6 +12,12 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDTargeting, Log, All);
 
+namespace PDAimLineTraceTargeting
+{
+	/** 가림 판정이 끝점 너머로 더 보는 거리다. 표면을 넘을 만큼만 준다. */
+	constexpr float SurfaceProbeDistance = 10.0f;
+}
+
 UPDAimLineTraceTargeting::UPDAimLineTraceTargeting()
 {
 	TargetObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
@@ -46,7 +52,7 @@ bool UPDAimLineTraceTargeting::Validate(FString& OutError) const
 
 void UPDAimLineTraceTargeting::GatherTargets(
 	const FPDActionTargetingContext& Context,
-	TArray<FPDActionTarget>& OutTargets) const
+	FPDActionTargetingResult& OutResult) const
 {
 	if (!Context.SourceActor)
 	{
@@ -60,6 +66,8 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	}
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PDAimLineTrace), true);
+	// 탄착 연출이 표면에 따라 달라질 수 있도록 멈춘 곳의 재질을 받아 둔다.
+	QueryParams.bReturnPhysicalMaterial = true;
 	QueryParams.AddIgnoredActor(Context.SourceActor);
 	if (const UActorComponent* SourceComponent =
 		Cast<UActorComponent>(Context.SourceObject))
@@ -85,14 +93,24 @@ void UPDAimLineTraceTargeting::GatherTargets(
 		}
 	}
 
+	const FVector Direction = (End - Start).GetSafeNormal();
+	FHitResult ObstructionHit;
+	bool bObstructed = false;
 	float ObstructionDistanceSquared = TNumericLimits<float>::Max();
 	if (bRequireUnobstructedPath)
 	{
-		FHitResult ObstructionHit;
+		// 끝점은 1단계 판정이 맞힌 표면 위에 있다. 딱 거기서 끝내면 부동소수
+		// 오차로 그 표면을 놓쳐 벽에 쏜 탄이 허공에 멈춘 것으로 나온다.
+		// 대상은 끝점까지만 모으므로 조금 더 보는 것은 대상 판정에 영향이 없다.
 		const ECollisionChannel Channel = UEngineTypes::ConvertToCollisionChannel(
 			ObstructionTraceChannel.GetValue());
-		if (Channel < ECC_MAX && World->LineTraceSingleByChannel(
-			ObstructionHit, Start, End, Channel, QueryParams))
+		bObstructed = Channel < ECC_MAX && World->LineTraceSingleByChannel(
+			ObstructionHit,
+			Start,
+			End + Direction * PDAimLineTraceTargeting::SurfaceProbeDistance,
+			Channel,
+			QueryParams);
+		if (bObstructed)
 		{
 			ObstructionDistanceSquared = FVector::DistSquared(
 				Start, ObstructionHit.ImpactPoint);
@@ -101,6 +119,7 @@ void UPDAimLineTraceTargeting::GatherTargets(
 
 	TArray<FHitResult> Hits;
 	World->LineTraceMultiByObjectType(Hits, Start, End, ObjectParams, QueryParams);
+	TArray<FPDActionTarget>& OutTargets = OutResult.Targets;
 	TSet<TObjectPtr<AActor>> SeenActors;
 	for (const FHitResult& Hit : Hits)
 	{
@@ -124,6 +143,33 @@ void UPDAimLineTraceTargeting::GatherTargets(
 		}
 	}
 
+	// 탄이 멈춘 곳이다. 대상 수를 다 채웠으면 마지막 대상에서, 가려졌으면
+	// 가린 곳에서 멈춘다. 둘 다 아니면 사거리 끝까지 날아간 것이다.
+	// 가림을 보지 않는 설정이면 대상 판정처럼 탄도 벽을 지나간다.
+	FHitResult& Shot = OutResult.ShotResult;
+	if (OutTargets.Num() >= MaxTargets)
+	{
+		Shot = OutTargets.Last().HitResult;
+		Shot.bBlockingHit = true;
+	}
+	else if (bObstructed)
+	{
+		Shot = ObstructionHit;
+	}
+	else
+	{
+		Shot = FHitResult(Start, End);
+		Shot.Location = End;
+		Shot.ImpactPoint = End;
+		Shot.Distance = FVector::Dist(Start, End);
+		// 허공에서 멈춘 탄은 표면이 없다. 쏜 쪽을 보는 면에 멈춘 것처럼 둔다.
+		Shot.Normal = -Direction;
+		Shot.ImpactNormal = -Direction;
+	}
+	Shot.TraceStart = Start;
+	Shot.TraceEnd = End;
+	OutResult.bHasShotResult = true;
+
 #if ENABLE_DRAW_DEBUG
 	if (bDrawDebugTrace)
 	{
@@ -136,6 +182,16 @@ void UPDAimLineTraceTargeting::GatherTargets(
 			DebugDrawDuration,
 			0,
 			1.0f);
+		if (Shot.bBlockingHit)
+		{
+			DrawDebugPoint(
+				World,
+				Shot.ImpactPoint,
+				8.0f,
+				FColor::Yellow,
+				false,
+				DebugDrawDuration);
+		}
 	}
 #endif
 }

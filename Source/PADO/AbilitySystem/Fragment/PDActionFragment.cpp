@@ -16,6 +16,24 @@ void UPDActionFragment::AppendDeclaredSetByCallerTags(
 {
 }
 
+bool UPDActionFragment::SupportsLocalPrediction() const
+{
+	return false;
+}
+
+bool UPDActionFragment::RequiresShotResult() const
+{
+	return false;
+}
+
+bool UPDActionFragment::CanActivateWithPredictedState(
+	const FPDActionExecutionContext& Context,
+	FString& OutError) const
+{
+	OutError.Reset();
+	return true;
+}
+
 bool UPDActionFragment::SupportsDeferredExecution() const
 {
 	return false;

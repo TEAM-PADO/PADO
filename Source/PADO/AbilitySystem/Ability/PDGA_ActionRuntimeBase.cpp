@@ -194,38 +194,47 @@ void UPDGA_ActionRuntimeBase::EndAbility(
 
 bool UPDGA_ActionRuntimeBase::BeginExecutionWindow()
 {
-	if (!TryBeginExecutionWindow())
-	{
-		return false;
-	}
+	return TryBeginExecutionWindow() && RunExecuteStartHook(nullptr);
+}
+
+bool UPDGA_ActionRuntimeBase::RunExecuteStartHook(const FHitResult* ShotResult)
+{
 	bFirstHitHookExecuted = false;
 
-	// 대상 수집 전에 실행한다. 명중 여부와 무관한 연출이 여기에 온다.
-	if (!ExecuteSourceHook(TAG_PD_ActionHook_OnExecuteStart))
+	// 대상에게 결과를 주기 전에 실행한다. 명중 여부와 무관한 연출이 여기에 온다.
+	if (!ExecuteSourceHook(TAG_PD_ActionHook_OnExecuteStart, ShotResult))
 	{
 		// 발사 비용처럼 필수인 Fragment가 실패하면 이 실행 구간 전체를 중단한다.
 		FinishAction(true, false);
 		return false;
 	}
 
-	// Hook이 Ability를 끝냈다면 이어서 대상 판정을 하지 않는다.
+	// Hook이 Ability를 끝냈다면 이어서 대상에게 결과를 주지 않는다.
 	return !IsFinishingAction();
 }
-
 
 void UPDGA_ActionRuntimeBase::ExecutePulse()
 {
 	const UPDAbilityDefinition* Definition = GetActiveDefinition();
 	const UPDInstantActionTargeting* Targeting = Cast<UPDInstantActionTargeting>(
 		Definition ? Definition->ActionTargeting : nullptr);
-	if (!bActionExecutionStarted || !Targeting || !BeginExecutionWindow())
+	if (!bActionExecutionStarted || !Targeting || !TryBeginExecutionWindow())
 	{
 		return;
 	}
 
-	TArray<FPDActionTarget> Targets;
-	Targeting->GatherTargets(BuildTargetingContext(), Targets);
-	ExecuteTargets(Targets);
+	// 대상을 먼저 모아 OnExecuteStart가 이번 발이 멈춘 곳을 받게 한다.
+	// 판정은 상태를 바꾸지 않으므로 탄약 같은 비용보다 먼저 해도 된다.
+	// 비용이 실패하면 모은 대상은 쓰지 않고 버린다.
+	FPDActionTargetingResult Result;
+	Targeting->GatherTargets(BuildTargetingContext(), Result);
+	if (!RunExecuteStartHook(
+		Result.bHasShotResult ? &Result.ShotResult : nullptr))
+	{
+		return;
+	}
+
+	ExecuteTargets(Result.Targets);
 }
 
 bool UPDGA_ActionRuntimeBase::ShouldDeferActionExecutionStart() const
@@ -449,7 +458,9 @@ void UPDGA_ActionRuntimeBase::StopLoopingCue()
 	ActiveLoopingCueTag = FGameplayTag();
 }
 
-bool UPDGA_ActionRuntimeBase::ExecuteSourceHook(FGameplayTag HookTag)
+bool UPDGA_ActionRuntimeBase::ExecuteSourceHook(
+	FGameplayTag HookTag,
+	const FHitResult* ShotResult)
 {
 	const UPDAbilityDefinition* Definition = GetActiveDefinition();
 	if (!Definition)
@@ -465,7 +476,9 @@ bool UPDGA_ActionRuntimeBase::ExecuteSourceHook(FGameplayTag HookTag)
 	return ExecuteActionHook(
 		HookTag,
 		GetAbilitySystemComponentFromActorInfo(),
-		GetAvatarActorFromActorInfo());
+		GetAvatarActorFromActorInfo(),
+		nullptr,
+		ShotResult);
 }
 
 void UPDGA_ActionRuntimeBase::FinishAction(

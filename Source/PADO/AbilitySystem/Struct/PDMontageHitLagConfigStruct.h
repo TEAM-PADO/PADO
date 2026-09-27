@@ -24,7 +24,7 @@ struct PADO_API FPDMontageHitLagConfigStruct
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
-		Category = "Hit Lag",
+		Category = "Settings",
 		meta = (ClampMin = "0.05", ClampMax = "0.95", UIMin = "0.05", UIMax = "0.95"))
 	float PlayRateMultiplier = 0.2f;
 
@@ -32,11 +32,11 @@ struct PADO_API FPDMontageHitLagConfigStruct
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
-		Category = "Hit Lag",
+		Category = "Settings",
 		meta = (ClampMin = "0.001", ClampMax = "0.5", UIMin = "0.01", UIMax = "0.2", Units = "s"))
 	float Duration = 0.06f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit Lag")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	EPDMontageHitLagRetriggerPolicy RetriggerPolicy =
 		EPDMontageHitLagRetriggerPolicy::IgnoreWhileActive;
 

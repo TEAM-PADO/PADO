@@ -29,12 +29,12 @@ public:
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
-		Category = "Effect",
+		Category = "Settings",
 		meta = (ShowOnlyInnerProperties))
 	FPDGameplayEffectRecipeStruct EffectRecipe;
 
 	/** Infinite GE를 GA 종료 시 자동 회수할 때 사용한다. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Effect")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	bool bTrackUntilAbilityEnds = false;
 
 private:

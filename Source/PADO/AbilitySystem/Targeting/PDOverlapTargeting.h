@@ -28,7 +28,7 @@ public:
 
 	virtual void GatherTargets(
 		const FPDActionTargetingContext& Context,
-		TArray<FPDActionTarget>& OutTargets) const override;
+		FPDActionTargetingResult& OutResult) const override;
 
 	/** 판정에 쓸 볼륨이다. 비우면 소스의 Root Primitive를 쓴다. */
 	UPROPERTY(

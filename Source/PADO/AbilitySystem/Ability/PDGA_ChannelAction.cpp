@@ -8,7 +8,7 @@
 
 UPDGA_ChannelAction::UPDGA_ChannelAction()
 {
-	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
+	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 }
 
 void UPDGA_ChannelAction::ActivateAbility(

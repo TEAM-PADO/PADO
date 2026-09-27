@@ -15,6 +15,7 @@ class UAbilitySystemComponent;
 class UPDAbilitySystemComponent;
 class UPDHeldItemComponent;
 class UPDKnockbackComponent;
+class UPDRecoilComponent;
 class UPDCharacterMovementComponent;
 class UPDMovementAttributeSet;
 struct FOnAttributeChangeData;
@@ -171,6 +172,9 @@ public:
 		return HeldItemComponent;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Recoil")
+	UPDRecoilComponent* GetRecoilComponent() const { return RecoilComponent; }
+
 	UFUNCTION(BlueprintPure, Category = "PADO|Camera")
 	USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 
@@ -213,6 +217,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDKnockbackComponent> KnockbackComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Recoil", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDRecoilComponent> RecoilComponent;
 
 	/** 슬로우·헤이스트가 붙는 계층이다. ASC가 소유자로 등록한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Movement", meta = (AllowPrivateAccess = "true"))

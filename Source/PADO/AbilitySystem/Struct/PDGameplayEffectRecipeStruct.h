@@ -13,20 +13,20 @@ struct PADO_API FPDGameplayEffectRecipeStruct
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Effect")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	TSubclassOf<UGameplayEffect> EffectClass;
 
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
-		Category = "Effect",
+		Category = "Settings",
 		meta = (ClampMin = "0.0"))
 	float EffectLevel = 1.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Effect")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	TArray<FPDSetByCallerValueStruct> SetByCallers;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Effect")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	FGameplayTagContainer DynamicGrantedTags;
 
 	bool Validate(FString& OutError) const;

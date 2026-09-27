@@ -15,6 +15,9 @@ class PADO_API UPDConsumeMagazineAmmoFragment : public UPDActionFragment
 public:
 	UPDConsumeMagazineAmmoFragment();
 
+	virtual bool CanActivateWithPredictedState(
+		const FPDActionExecutionContext& Context,
+		FString& OutError) const override;
 	virtual bool CanExecute(
 		const FPDActionExecutionContext& Context,
 		FString& OutError) const override;

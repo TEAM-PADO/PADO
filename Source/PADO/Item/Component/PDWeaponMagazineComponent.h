@@ -4,7 +4,10 @@
 #include "Components/ActorComponent.h"
 #include "PDWeaponMagazineComponent.generated.h"
 
+class UAnimInstance;
+class UAnimMontage;
 class UPDItemDefinition;
+class UPDItemMagazineTrait;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FPDWeaponMagazineChangedSignature,
@@ -32,6 +35,15 @@ public:
 	/** Definition 교체 시에는 ResetToFull을 사용하고, BeginPlay 재진입은 상태를 보존한다. */
 	bool InitializeMagazine(bool bResetToFull);
 
+	/**
+	 * 복제된 상태만으로 판정한다. 서버와 소유 클라이언트가 같은 함수를 본다.
+	 *
+	 * 예측에는 클라이언트도 같은 판정이 필요하다. 조건을 따로 적으면 반드시
+	 * 어긋나므로 판정은 여기 한 곳에만 둔다.
+	 */
+	UFUNCTION(BlueprintPure, Category = "PD|Item|Weapon")
+	bool CanConsumeRoundWithReplicatedState() const;
+
 	bool CanConsumeRound(FString& OutError) const;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item|Weapon")
@@ -42,6 +54,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item|Weapon")
 	bool CancelReload();
+
+	/**
+	 * 재장전 몽타주의 Reload Complete 노티파이가 부른다. 서버에서만 유효하다.
+	 * 몽타주가 없어 즉시 장전한 경우에는 거치지 않는다.
+	 */
+	bool NotifyReloadComplete();
 
 	UFUNCTION(BlueprintPure, Category = "PD|Item|Weapon")
 	int32 GetCurrentMagazineAmmo() const { return CurrentMagazineAmmo; }
@@ -75,9 +93,19 @@ protected:
 	UFUNCTION()
 	void OnRep_ReloadState();
 
+	/** 몽타주가 끝나거나 끊겼을 때 재장전 상태를 정리한다. */
+	void OnReloadMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
 private:
-	const UPDItemDefinition* ResolveMagazineDefinition() const;
+	/** 탄창 Trait이 없으면 nullptr. Definition 교체를 따라가야 해서 매번 조회한다. */
+	const UPDItemMagazineTrait* ResolveMagazineTrait() const;
 	float GetSynchronizedWorldTime() const;
+
+	/** Holder 캐릭터의 AnimInstance다. 몽타주를 재생할 수 없으면 nullptr. */
+	UAnimInstance* ResolveHolderAnimInstance() const;
+	bool PlayReloadMontage();
+	void StopReloadMontage();
+
 	void CompleteReload();
 	void BroadcastMagazineChanged();
 	void BroadcastReloadStateChanged();
@@ -92,7 +120,20 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_ReloadState)
 	float ReloadEndServerTime = 0.0f;
 
+	/**
+	 * 취소될 때만 증가한다. 정상 완료와 취소를 구분하려고 둔다. 완료는
+	 * 노티파이 시점이라 몽타주가 아직 남아 있고, 그때 멈추면 클라이언트에서
+	 * 재장전 동작이 중간에 잘린다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_ReloadState)
+	uint8 ReloadCancelCounter = 0;
+
 	bool bMagazineInitialized = false;
 	TWeakObjectPtr<const UPDItemDefinition> InitializedDefinition;
-	FTimerHandle ReloadTimerHandle;
+
+	/** 재생 중인 재장전 몽타주다. 취소할 때 같은 몽타주만 멈추려고 들고 있다. */
+	TWeakObjectPtr<UAnimMontage> ActiveReloadMontage;
+
+	/** 이 인스턴스가 마지막으로 반영한 취소 카운터다. */
+	uint8 ObservedReloadCancelCounter = 0;
 };

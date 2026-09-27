@@ -7,6 +7,7 @@
 #include "GameplayEffect.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Definition/PDAbilityDefinition.h"
+#include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/AbilitySystem/Effect/PDGE_ActionCooldown.h"
 #include "PADO/AbilitySystem/Fragment/PDActionExecutionContext.h"
 #include "PADO/AbilitySystem/Fragment/PDActionFragment.h"
@@ -65,12 +66,54 @@ bool UPDGA_Base::CanActivateAbility(
 		return false;
 	}
 
-	return Super::CanActivateAbility(
+	if (!Super::CanActivateAbility(
 		Handle,
 		ActorInfo,
 		SourceTags,
 		TargetTags,
-		OptionalRelevantTags);
+		OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	// 필수 Fragment의 전제 조건을 활성화 전에 본다. 소유 클라이언트가 예측할 때
+	// 같은 판정을 하므로, 서버가 거부할 발사를 미리 걸러 헛연출을 줄인다.
+	UAbilitySystemComponent* AbilitySystem =
+		ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	if (!AbilitySystem)
+	{
+		return true;
+	}
+
+	const FGameplayAbilitySpec* Spec =
+		AbilitySystem->FindAbilitySpecFromHandle(Handle);
+
+	FPDActionExecutionContext GateContext;
+	GateContext.SourceAbilitySystem = AbilitySystem;
+	GateContext.SourceActor = ActorInfo->AvatarActor.Get();
+	GateContext.EffectSourceObject = Spec ? Spec->SourceObject.Get() : nullptr;
+	GateContext.bIsPredicting = !AbilitySystem->IsOwnerActorAuthoritative();
+
+	for (const FPDActionHookStruct& Hook : Definition->ActionHooks)
+	{
+		for (const UPDActionFragment* Fragment : Hook.Fragments)
+		{
+			// 대상이 아직 없으므로 Source 기준 필수 Fragment만 본다.
+			if (!IsValid(Fragment) || !Fragment->bRequired ||
+				Fragment->ApplicationScope != EPDActionScope::Source)
+			{
+				continue;
+			}
+
+			FString GateError;
+			if (!Fragment->CanActivateWithPredictedState(GateContext, GateError))
+			{
+				return false;
+			}
+		}
+	}
+
+	return true;
 }
 
 bool UPDGA_Base::CheckCooldown(
@@ -138,9 +181,15 @@ void UPDGA_Base::ApplyCooldown(
 	// 따로 만들지 않아도 된다.
 	CooldownSpec.Data->DynamicGrantedTags.AddTag(
 		Definition->ActionCooldown.CooldownTag);
+	// 자동 발사는 클라 반복 간격과 쿨다운이 같으면 매 발 경합한다.
+	// Definition이 정한 실제 강제 지속시간을 쓴다.
+	const UPDSingleActionDefinition* SingleAction =
+		Cast<UPDSingleActionDefinition>(Definition);
 	CooldownSpec.Data->SetSetByCallerMagnitude(
 		TAG_PD_Data_Cooldown_Duration,
-		Definition->ActionCooldown.Duration);
+		SingleAction
+			? SingleAction->GetEnforcedCooldownDuration()
+			: Definition->ActionCooldown.Duration);
 	ApplyGameplayEffectSpecToOwner(
 		Handle,
 		ActorInfo,
@@ -222,7 +271,8 @@ bool UPDGA_Base::ExecuteActionHook(
 	FGameplayTag HookTag,
 	UAbilitySystemComponent* TargetAbilitySystem,
 	AActor* TargetActor,
-	const FHitResult* HitResult)
+	const FHitResult* HitResult,
+	const FHitResult* ShotResult)
 {
 	UAbilitySystemComponent* SourceAbilitySystem =
 		GetAbilitySystemComponentFromActorInfo();
@@ -242,10 +292,16 @@ bool UPDGA_Base::ExecuteActionHook(
 	Context.TargetActor = TargetActor;
 	Context.EffectSourceObject = GetCurrentSourceObject();
 	Context.InputChargeAlpha = ExecutionChargeAlpha;
+	Context.bIsPredicting = !Context.IsAuthoritative();
 	if (HitResult)
 	{
 		Context.HitResult = *HitResult;
 		Context.bHasHitResult = true;
+	}
+	if (ShotResult)
+	{
+		Context.ShotResult = *ShotResult;
+		Context.bHasShotResult = true;
 	}
 
 	TArray<const UPDActionFragment*, TInlineAllocator<8>> ExecutableFragments;
@@ -259,6 +315,13 @@ bool UPDGA_Base::ExecuteActionHook(
 				TEXT("Hook '%s'에 비어 있는 Fragment가 있어 실행을 중단했습니다."),
 				*HookTag.ToString());
 			return false;
+		}
+
+		// 예측 실행에서는 되돌릴 수 있는 것만 돌린다. 나머지는 서버가 한다.
+		// 여기서 한 번에 거르므로 Fragment마다 권한 분기를 두지 않는다.
+		if (Context.bIsPredicting && !Fragment->SupportsLocalPrediction())
+		{
+			continue;
 		}
 
 		FString ExecutionError;

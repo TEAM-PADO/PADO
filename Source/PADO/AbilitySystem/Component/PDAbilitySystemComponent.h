@@ -72,99 +72,47 @@ public:
 	 * ServerOnly Ability로 실행한 사용 동작을 정작 사용한 본인이 볼 수 없다.
 	 * 판정은 서버가 단독으로 확정하며 요청 번호는 표현 중복과 늦은 응답만 막는다.
 	 */
-	void PlayActionMontageForRemoteOwner(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		UAnimMontage* Montage,
-		float PlayRate,
-		FName StartSection);
-
-	void StopActionMontageForRemoteOwner(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		UAnimMontage* Montage);
-
-	/** 서버에서 확정한 짧은 재생률 변경을 원격 소유자의 선재생 몽타주에도 적용한다. */
+	/**
+	 * 서버가 확정한 짧은 재생률 변경을 원격 소유자에게도 적용한다.
+	 *
+	 * 몽타주 자체는 LocalPredicted 어빌리티가 클라이언트에서 직접 재생한다.
+	 * 역경직은 명중이 확정된 뒤에야 알 수 있으므로 서버가 따로 알려야 한다.
+	 */
 	void ApplyActionMontageHitLagForRemoteOwner(
-		FGameplayAbilitySpecHandle AbilityHandle,
 		UAnimMontage* Montage,
 		float EffectivePlayRate,
 		float Duration,
-		uint32 HitLagGeneration);
+		uint32 InHitLagGeneration);
 
 protected:
 	UFUNCTION(Server, Reliable)
-	void ServerPressAbilityInputByHandle(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId);
+	void ServerPressAbilityInputByHandle(FGameplayAbilitySpecHandle AbilityHandle);
 
 	UFUNCTION(Server, Reliable)
 	void ServerReleaseAbilityInputByHandle(FGameplayAbilitySpecHandle AbilityHandle);
 
 	UFUNCTION(Client, Reliable)
-	void ClientPlayActionMontage(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId,
-		UAnimMontage* Montage,
-		float PlayRate,
-		FName StartSection);
-
-	UFUNCTION(Client, Reliable)
-	void ClientStopActionMontage(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId,
-		UAnimMontage* Montage);
-
-	UFUNCTION(Client, Reliable)
-	void ClientRejectActionMontage(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId);
-
-	UFUNCTION(Client, Reliable)
 	void ClientApplyActionMontageHitLag(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId,
 		UAnimMontage* Montage,
 		float EffectivePlayRate,
 		float Duration,
-		uint32 HitLagGeneration);
+		uint32 InHitLagGeneration);
 
 private:
 	bool ProcessAbilityInputPressed(FGameplayAbilitySpecHandle AbilityHandle);
 	bool ProcessAbilityInputReleased(FGameplayAbilitySpecHandle AbilityHandle);
 	bool IsRemoteOwnerMontageTarget() const;
-	uint32 BeginLocalActionMontagePrediction(
-		FGameplayAbilitySpecHandle AbilityHandle);
-	bool PlayActionMontageLocally(
-		UAnimMontage* Montage,
-		float PlayRate,
-		FName StartSection);
-	void StopLocalActionMontagePrediction(bool bResetState);
-	void ResetLocalActionMontagePrediction();
-	void RestoreLocalActionMontagePlayRate();
-	void ClearLocalActionMontageHitLag();
-	/** 이 핸들의 액션이 아직 진행 중인지. 중복 Press의 예측 재생을 막는다. */
-	bool HasOutstandingLocalAction(FGameplayAbilitySpecHandle AbilityHandle);
-	bool MatchesLocalActionRequest(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		uint32 ActionRequestId) const;
-	bool ResolveLocalActionMontage(
-		FGameplayAbilitySpecHandle AbilityHandle,
-		UAnimMontage*& OutMontage,
-		float& OutPlayRate,
-		FName& OutStartSection,
-		bool& bOutStopOnRelease) const;
+	void RestoreHitLagPlayRate();
+	void ClearHitLag();
 
-	uint32 LastLocalActionRequestId = 0;
-	FGameplayAbilitySpecHandle LocalActionAbilityHandle;
-	uint32 LocalActionRequestId = 0;
-	TWeakObjectPtr<UAnimMontage> LocalActionMontage;
-	float LocalActionPlayRate = 1.0f;
-	FName LocalActionStartSection = NAME_None;
-	FTimerHandle LocalActionHitLagTimerHandle;
-	uint32 LocalActionHitLagGeneration = 0;
-	bool bLocalActionStopOnRelease = false;
-	bool bLocalActionInputReleased = false;
-	bool bLocalActionMontagePlayed = false;
+	/** 역경직으로 재생률을 낮춘 몽타주다. 복원 대상이다. */
+	TWeakObjectPtr<UAnimMontage> HitLagMontage;
 
-	TMap<FGameplayAbilitySpecHandle, uint32> PendingServerActionRequests;
-	TMap<FGameplayAbilitySpecHandle, uint32> ActiveServerActionRequests;
+	/** 역경직 전 재생률이다. 복원할 때 되돌린다. */
+	float HitLagRestorePlayRate = 1.0f;
+
+	FTimerHandle HitLagTimerHandle;
+
+	/** 서버가 붙인 순번이다. 늦게 도착한 오래된 역경직을 무시한다. */
+	uint32 HitLagGeneration = 0;
 };

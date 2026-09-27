@@ -26,7 +26,7 @@ public:
 
 	virtual void GatherTargets(
 		const FPDActionTargetingContext& Context,
-		TArray<FPDActionTarget>& OutTargets) const override;
+		FPDActionTargetingResult& OutResult) const override;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Shape")
 	EPDSweepShape Shape = EPDSweepShape::Sphere;

@@ -23,7 +23,7 @@ public:
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
-		Category = "Hit Lag",
+		Category = "Settings",
 		meta = (ShowOnlyInnerProperties))
 	FPDMontageHitLagConfigStruct HitLag;
 };

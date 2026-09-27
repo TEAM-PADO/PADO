@@ -10,6 +10,7 @@
 #include "Engine/OverlapResult.h"
 #include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
+#include "PADO/Character/PDRecoilComponent.h"
 #include "Engine/World.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
@@ -99,6 +100,8 @@ APDPlayerCharacter::APDPlayerCharacter(
 		CreateDefaultSubobject<UPDHeldItemComponent>(TEXT("HeldItem"));
 	KnockbackComponent =
 		CreateDefaultSubobject<UPDKnockbackComponent>(TEXT("Knockback"));
+	RecoilComponent =
+		CreateDefaultSubobject<UPDRecoilComponent>(TEXT("Recoil"));
 }
 
 UAbilitySystemComponent* APDPlayerCharacter::GetAbilitySystemComponent() const
@@ -226,6 +229,12 @@ void APDPlayerCharacter::Look(const FVector2D& LookInput)
 {
 	AddControllerYawInput(LookInput.X);
 	AddControllerPitchInput(LookInput.Y);
+
+	// 유저가 반동을 눌러 상쇄한 만큼은 복원하지 않아야 한다.
+	if (RecoilComponent)
+	{
+		RecoilComponent->NotifyLookInput(LookInput);
+	}
 }
 
 void APDPlayerCharacter::StartJump()
@@ -375,6 +384,8 @@ bool APDPlayerCharacter::StartAttacking()
 {
 	if (HeldItemComponent && HeldItemComponent->HasHeldItem())
 	{
+		// 반동은 Held Item이 발사할 때마다 보내는 신호를 구독한다.
+		// 여기서 따로 치면 게이트가 두 벌이 되어 반드시 어긋난다.
 		return HeldItemComponent->PressHeldItemUse();
 	}
 

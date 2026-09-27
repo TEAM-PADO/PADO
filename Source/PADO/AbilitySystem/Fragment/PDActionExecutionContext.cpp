@@ -8,6 +8,11 @@ bool FPDActionExecutionContext::IsAuthoritative() const
 		SourceAbilitySystem->IsOwnerActorAuthoritative();
 }
 
+bool FPDActionExecutionContext::IsAuthoritativeOrPredicting() const
+{
+	return bIsPredicting || IsAuthoritative();
+}
+
 AActor* FPDActionExecutionContext::ResolveScopedActor(
 	EPDActionScope Scope) const
 {

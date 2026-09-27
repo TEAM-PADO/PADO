@@ -33,7 +33,28 @@ struct PADO_API FPDActionExecutionContext
 	FHitResult HitResult;
 	bool bHasHitResult = false;
 
+	/**
+	 * 이번 발이 멈춘 곳이다. OnExecuteStart에서, 선을 긋는 Instant Targeting일
+	 * 때만 채워진다. 트레이서와 탄착 연출이 쓴다.
+	 *
+	 * HitResult와 따로 둔다. HitResult는 대상에게 맞은 결과라서 이것을 넣으면
+	 * HitResult를 명중 위치로 읽는 기존 Fragment들이 빗나간 탄에도 반응한다.
+	 */
+	FHitResult ShotResult;
+	bool bHasShotResult = false;
+
+	/**
+	 * 소유 클라이언트가 서버 확정 전에 미리 실행하는 중인가.
+	 *
+	 * 예측 실행에서는 게임 상태를 바꾸면 안 된다. 서버가 같은 일을 다시 하고,
+	 * 거부해도 되돌릴 방법이 없다. 연출처럼 되돌릴 필요가 없는 것만 예측한다.
+	 */
+	bool bIsPredicting = false;
+
 	bool IsAuthoritative() const;
+
+	/** 서버 실행이거나 소유 클라이언트의 예측 실행인가. */
+	bool IsAuthoritativeOrPredicting() const;
 
 	AActor* ResolveScopedActor(EPDActionScope Scope) const;
 	UAbilitySystemComponent* ResolveScopedAbilitySystem(EPDActionScope Scope) const;
