@@ -295,6 +295,11 @@ bool UPDGA_ActionRuntimeBase::HasActionExecutionStarted() const
 	return bActionExecutionStarted;
 }
 
+APDWorldItemActor* UPDGA_ActionRuntimeBase::GetActiveSourceItem() const
+{
+	return ActiveSourceItem.Get();
+}
+
 FPDActionTargetingContext UPDGA_ActionRuntimeBase::BuildTargetingContext() const
 {
 	FPDActionTargetingContext Context;

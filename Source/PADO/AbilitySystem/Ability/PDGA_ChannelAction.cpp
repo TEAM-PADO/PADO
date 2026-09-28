@@ -1,10 +1,8 @@
 #include "PADO/AbilitySystem/Ability/PDGA_ChannelAction.h"
 
-#include "Engine/World.h"
 #include "PADO/AbilitySystem/Definition/PDChannelActionDefinition.h"
 #include "PADO/AbilitySystem/Targeting/PDActionTargeting.h"
 #include "PADO/AbilitySystem/Task/PDAbilityTask_PlayActionMontage.h"
-#include "TimerManager.h"
 
 UPDGA_ChannelAction::UPDGA_ChannelAction()
 {
@@ -18,7 +16,6 @@ void UPDGA_ChannelAction::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	ActiveMontageTask = nullptr;
-	StopFixedIntervalExecution();
 
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	if (!IsActive())
@@ -28,57 +25,40 @@ void UPDGA_ChannelAction::ActivateAbility(
 
 	const UPDChannelActionDefinition* Definition =
 		Cast<UPDChannelActionDefinition>(GetActiveDefinition());
-	if (!Definition)
+
+	// 실행 시점은 몽타주의 Notify뿐이라 몽타주 없이는 성립하지 않는다.
+	if (!Definition || !IsValid(Definition->ActionMontage.Montage))
 	{
 		FinishAction(true, false);
 		return;
 	}
 
-	// MontageEvent는 몽타주 Notify가 유일한 실행 시점이라 몽타주 없이는 성립하지 않는다.
-	const bool bHasMontage = IsValid(Definition->ActionMontage.Montage);
-	if (!bHasMontage &&
-		Definition->ExecutionMode == EPDChannelExecutionMode::MontageEvent)
+	const bool bListenForExecuteEvent =
+		Definition->ActionTargeting->IsA<UPDInstantActionTargeting>();
+	ActiveMontageTask = UPDAbilityTask_PlayActionMontage::Create(
+		this,
+		Definition->ActionMontage,
+		bListenForExecuteEvent);
+	if (!ActiveMontageTask)
 	{
 		FinishAction(true, false);
 		return;
 	}
 
-	if (bHasMontage)
+	if (bListenForExecuteEvent)
 	{
-		const bool bListenForExecuteEvent =
-			Definition->ExecutionMode == EPDChannelExecutionMode::MontageEvent &&
-			Definition->ActionTargeting->IsA<UPDInstantActionTargeting>();
-		ActiveMontageTask = UPDAbilityTask_PlayActionMontage::Create(
+		ActiveMontageTask->OnExecute.AddDynamic(
 			this,
-			Definition->ActionMontage,
-			bListenForExecuteEvent);
-		if (!ActiveMontageTask)
-		{
-			FinishAction(true, false);
-			return;
-		}
-
-		if (bListenForExecuteEvent)
-		{
-			ActiveMontageTask->OnExecute.AddDynamic(
-				this,
-				&UPDGA_ChannelAction::HandleExecuteEvent);
-		}
-		// 몽타주가 끝나면 채널도 끝난다. 유지형 연출에는 루프 몽타주를 써야 한다.
-		ActiveMontageTask->OnCompleted.AddDynamic(
-			this,
-			&UPDGA_ChannelAction::HandleMontageEnded);
-		ActiveMontageTask->OnInterrupted.AddDynamic(
-			this,
-			&UPDGA_ChannelAction::HandleMontageEnded);
-		ActiveMontageTask->ReadyForActivation();
+			&UPDGA_ChannelAction::HandleExecuteEvent);
 	}
-
-	if (IsActive() && !IsFinishingAction() &&
-		Definition->ExecutionMode == EPDChannelExecutionMode::FixedInterval)
-	{
-		StartFixedIntervalExecution();
-	}
+	// 몽타주가 끝나면 채널도 끝난다. 유지형 연출에는 루프 몽타주를 써야 한다.
+	ActiveMontageTask->OnCompleted.AddDynamic(
+		this,
+		&UPDGA_ChannelAction::HandleMontageEnded);
+	ActiveMontageTask->OnInterrupted.AddDynamic(
+		this,
+		&UPDGA_ChannelAction::HandleMontageEnded);
+	ActiveMontageTask->ReadyForActivation();
 }
 
 void UPDGA_ChannelAction::InputReleased(
@@ -97,7 +77,6 @@ void UPDGA_ChannelAction::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	StopFixedIntervalExecution();
 	ActiveMontageTask = nullptr;
 
 	Super::EndAbility(
@@ -132,52 +111,4 @@ const FPDLoopingCueStruct* UPDGA_ChannelAction::GetLoopingCueConfig() const
 	const UPDChannelActionDefinition* Definition =
 		Cast<UPDChannelActionDefinition>(GetActiveDefinition());
 	return Definition ? &Definition->LoopingCue : nullptr;
-}
-
-void UPDGA_ChannelAction::StartFixedIntervalExecution()
-{
-	const UPDChannelActionDefinition* Definition =
-		Cast<UPDChannelActionDefinition>(GetActiveDefinition());
-	UWorld* World = GetWorld();
-	if (!Definition || !World ||
-		Definition->ExecutionMode != EPDChannelExecutionMode::FixedInterval)
-	{
-		FinishAction(true, false);
-		return;
-	}
-
-	World->GetTimerManager().SetTimer(
-		FixedIntervalTimerHandle,
-		this,
-		&UPDGA_ChannelAction::HandleFixedIntervalPulse,
-		Definition->PulseInterval,
-		true);
-
-	if (Definition->bExecuteImmediately && IsActive() && !IsFinishingAction())
-	{
-		ExecutePulse();
-	}
-}
-
-void UPDGA_ChannelAction::StopFixedIntervalExecution()
-{
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(FixedIntervalTimerHandle);
-	}
-	else
-	{
-		FixedIntervalTimerHandle.Invalidate();
-	}
-}
-
-void UPDGA_ChannelAction::HandleFixedIntervalPulse()
-{
-	if (!IsActive() || IsFinishingAction())
-	{
-		StopFixedIntervalExecution();
-		return;
-	}
-
-	ExecutePulse();
 }

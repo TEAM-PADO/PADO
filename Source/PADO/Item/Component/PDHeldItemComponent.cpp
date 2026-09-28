@@ -4,7 +4,9 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
+#include "PADO/AbilitySystem/Ability/PDGA_Base.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
 #include "PADO/Item/PDWorldItemActor.h"
@@ -228,9 +230,35 @@ bool UPDHeldItemComponent::SendShot(APDWorldItemActor* Item)
 		return false;
 	}
 
-	// 서버가 탄약·재장전·쿨다운으로 거부할 수 있다. 여기서는 "보냈다"만 알린다.
-	OnLocalShotFired.Broadcast(Item);
+	// 이 머신에서 실제로 활성화된 발이다. 서버가 나중에 거부할 수는 있지만,
+	// 반동이 실제 발사보다 앞서 나가지는 않는다. Fire Action은 Press가 방아쇠를
+	// 당긴 것일 뿐이라 발을 Action이 직접 알린다.
+	if (DoesPressFireShot(Item))
+	{
+		NotifyLocalShotFired(Item);
+	}
 	return true;
+}
+
+bool UPDHeldItemComponent::DoesPressFireShot(const APDWorldItemActor* Item) const
+{
+	const UPDItemDefinition* Definition =
+		IsValid(Item) ? Item->GetItemDefinition() : nullptr;
+	const UPDAbilityDefinition* UseAction = Definition
+		? Definition->UseAction.Get()
+		: nullptr;
+	const TSubclassOf<UPDGA_Base> AbilityClass = UseAction
+		? UseAction->GetAbilityClass()
+		: nullptr;
+	const UPDGA_Base* AbilityCDO = AbilityClass
+		? AbilityClass->GetDefaultObject<UPDGA_Base>()
+		: nullptr;
+	return !AbilityCDO || !AbilityCDO->UsesLocalTriggerInput();
+}
+
+void UPDHeldItemComponent::NotifyLocalShotFired(APDWorldItemActor* Item)
+{
+	OnLocalShotFired.Broadcast(Item);
 }
 
 float UPDHeldItemComponent::ResolveAutomaticFireInterval(
@@ -255,6 +283,19 @@ bool UPDHeldItemComponent::TryReloadHeldItem()
 	if (Holder->HasAuthority())
 	{
 		return ReloadHeldItemAuthority();
+	}
+
+	// 쏘던 중이면 이 순간 스스로 멈춘다. 서버는 이 요청보다 먼저 보낸 발을 먼저
+	// 처리하고 재장전한다. 예측으로 봐도 안 되는 요청은 보내지 않는다.
+	if (UPDWeaponMagazineComponent* Magazine = HeldItem->GetMagazineComponent())
+	{
+		if (!Magazine->CanRequestReload())
+		{
+			return false;
+		}
+
+		Magazine->MarkReloadRequested();
+		ReloadRequestedItem = HeldItem;
 	}
 
 	ServerReloadHeldItem();
@@ -359,7 +400,21 @@ void UPDHeldItemComponent::ServerDropHeldItem_Implementation()
 
 void UPDHeldItemComponent::ServerReloadHeldItem_Implementation()
 {
-	ReloadHeldItemAuthority();
+	if (!ReloadHeldItemAuthority())
+	{
+		ClientRejectReload();
+	}
+}
+
+void UPDHeldItemComponent::ClientRejectReload_Implementation()
+{
+	APDWorldItemActor* Item = ReloadRequestedItem.Get();
+	ReloadRequestedItem = nullptr;
+	if (UPDWeaponMagazineComponent* Magazine =
+		IsValid(Item) ? Item->GetMagazineComponent() : nullptr)
+	{
+		Magazine->ClearReloadRequest();
+	}
 }
 
 USceneComponent* UPDHeldItemComponent::ResolveAttachmentComponent(

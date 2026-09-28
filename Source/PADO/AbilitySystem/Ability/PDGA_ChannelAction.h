@@ -45,11 +45,4 @@ protected:
 	virtual bool TryBeginExecutionWindow() override;
 
 	virtual const FPDLoopingCueStruct* GetLoopingCueConfig() const override;
-
-private:
-	void StartFixedIntervalExecution();
-	void StopFixedIntervalExecution();
-	void HandleFixedIntervalPulse();
-
-	FTimerHandle FixedIntervalTimerHandle;
 };

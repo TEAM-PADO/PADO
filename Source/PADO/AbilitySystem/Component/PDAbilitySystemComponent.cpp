@@ -1,9 +1,11 @@
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 
 #include "Abilities/GameplayAbility.h"
+#include "GameplayEffect.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "PADO/AbilitySystem/Ability/PDGA_Base.h"
+#include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
 #include "PADO/AbilitySystem/Definition/PDAbilityDefinition.h"
 #include "PADO/AbilitySystem/Interface/PDAbilitySourceInterface.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
@@ -164,21 +166,44 @@ bool UPDAbilitySystemComponent::PressAbilityInputByHandle(
 		return ProcessAbilityInputPressed(AbilityHandle);
 	}
 
-	const FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(AbilityHandle);
-	const FGameplayTagContainer* AbilityTags = Spec && Spec->Ability
-		? &Spec->Ability->GetAssetTags()
-		: nullptr;
-	if (AbilityTags && AbilityTags->HasTag(TAG_PD_Ability_Action) &&
-		AreAbilityTagsBlocked(*AbilityTags))
+	FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(AbilityHandle);
+	if (!Spec || !Spec->Ability)
 	{
 		return false;
 	}
 
-	// 몽타주 선재생과 요청 ID 대조는 더 이상 없다. LocalPredicted 어빌리티가
-	// 소유 클라이언트에서 직접 활성화되어 몽타주와 Cue를 예측 재생하고,
-	// 중복 활성화 거부와 예측 회수는 GAS 예측 키가 처리한다.
-	ServerPressAbilityInputByHandle(AbilityHandle);
-	return true;
+	// 방아쇠는 조종하는 머신만 알면 된다. 서버에 필요한 것은 발 기록에 들어 있다.
+	// Block은 발마다 보므로 여기서 막지 않는다. 막혀 있어도 방아쇠 상태는 유지해야
+	// 풀리는 순간 이어서 쏜다.
+	if (UsesLocalTriggerInput(*Spec))
+	{
+		if (!Spec->IsActive())
+		{
+			return false;
+		}
+
+		AbilitySpecInputPressed(*Spec);
+		return true;
+	}
+
+	const FGameplayTagContainer& AbilityTags = Spec->Ability->GetAssetTags();
+	if (AbilityTags.HasTag(TAG_PD_Ability_Action) &&
+		AreAbilityTagsBlocked(AbilityTags))
+	{
+		return false;
+	}
+
+	// 아직 진행 중인 Action에 다시 들어온 Press는 새로 시작할 것이 없다.
+	// Press와 Release 짝이 어긋나지 않게 아무것도 하지 않는다.
+	if (Spec->IsActive())
+	{
+		return false;
+	}
+
+	// 소유 클라이언트가 바로 활성화한다. LocalPredicted라 GAS가 예측 키와 함께
+	// 서버 활성화를 요청하므로, 서버를 거쳐 되돌아오는 왕복 없이 바로 실행된다.
+	AbilitySpecInputPressed(*Spec);
+	return TryActivateAbility(AbilityHandle);
 }
 
 bool UPDAbilitySystemComponent::ReleaseAbilityInputByHandle(
@@ -194,20 +219,65 @@ bool UPDAbilitySystemComponent::ReleaseAbilityInputByHandle(
 		return ProcessAbilityInputReleased(AbilityHandle);
 	}
 
-	ServerReleaseAbilityInputByHandle(AbilityHandle);
-	return true;
-}
+	FGameplayAbilitySpec* LocalTriggerSpec = FindAbilitySpecFromHandle(AbilityHandle);
+	if (LocalTriggerSpec && UsesLocalTriggerInput(*LocalTriggerSpec))
+	{
+		AbilitySpecInputReleased(*LocalTriggerSpec);
+		return true;
+	}
 
-void UPDAbilitySystemComponent::ServerPressAbilityInputByHandle_Implementation(
-	FGameplayAbilitySpecHandle AbilityHandle)
-{
-	ProcessAbilityInputPressed(AbilityHandle);
+	// 서버에 먼저 알린다. 아래 로컬 처리로 Action이 끝나면 GAS가 종료를 서버에
+	// 따로 알리는데, 같은 채널의 신뢰성 RPC라 이 Release가 먼저 도착한다. 그래서
+	// 서버는 Release로 하는 일(Channel 완료, 충전 투척 실행)을 먼저 마친다.
+	ServerReleaseAbilityInputByHandle(AbilityHandle);
+
+	// 자기 인스턴스도 바로 Release를 받는다. 서버 종료가 복제되기를 기다리면
+	// 그동안 다시 누른 입력이 아직 활성인 Action에 막힌다.
+	if (FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(AbilityHandle))
+	{
+		AbilitySpecInputReleased(*Spec);
+	}
+	return true;
 }
 
 void UPDAbilitySystemComponent::ServerReleaseAbilityInputByHandle_Implementation(
 	FGameplayAbilitySpecHandle AbilityHandle)
 {
 	ProcessAbilityInputReleased(AbilityHandle);
+}
+
+bool UPDAbilitySystemComponent::UsesLocalTriggerInput(
+	const FGameplayAbilitySpec& Spec)
+{
+	const UPDGA_Base* Ability = Cast<UPDGA_Base>(Spec.Ability);
+	return Ability && Ability->UsesLocalTriggerInput();
+}
+
+void UPDAbilitySystemComponent::ServerSubmitFireShots_Implementation(
+	const FPDFireShotBatchStruct& Batch)
+{
+	FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(Batch.AbilityHandle);
+	UPDGA_FireAction* FireAction = Spec
+		? Cast<UPDGA_FireAction>(Spec->GetPrimaryInstance())
+		: nullptr;
+
+	// 무기를 놓아 Spec이 사라진 뒤 도착한 묶음은 버린다. 서버의 보유 상태가 우선이다.
+	if (FireAction)
+	{
+		FireAction->ProcessShotBatch(Batch);
+	}
+}
+
+void UPDAbilitySystemComponent::MulticastFireShots_Implementation(
+	const FPDFireShotBatchStruct& Batch)
+{
+	// 조종하는 머신은 쏜 순간 이미 보여 줬다.
+	if (!AbilityActorInfo.IsValid() || AbilityActorInfo->IsLocallyControlled())
+	{
+		return;
+	}
+
+	UPDGA_FireAction::PresentShotBatch(this, Batch);
 }
 
 bool UPDAbilitySystemComponent::ProcessAbilityInputPressed(
@@ -252,6 +322,74 @@ bool UPDAbilitySystemComponent::TryActivateGrantedAbilityWithEvent(
 		EventTag,
 		&EventData,
 		*this);
+}
+
+void UPDAbilitySystemComponent::BeginLocalActionCooldown(
+	FGameplayTag CooldownTag,
+	float Duration)
+{
+	const UWorld* World = GetWorld();
+	if (!World || !CooldownTag.IsValid() || Duration <= 0.0f)
+	{
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	double StartTime = Now;
+
+	// 끝난 지 한 프레임이 안 됐으면 예정된 시각에 이어서 시작한 것으로 본다.
+	// 반복 타이머는 프레임 단위로 늦게 불리고, 프레임이 길면 한 프레임에 여러 번
+	// 불린다. 호출된 시각에서 새로 세면 그 오차만큼 간격이 벌어지거나 한 프레임에
+	// 몰린 반복이 막혀서, 반복 속도가 프레임 속도에 따라 달라진다.
+	if (const double* PreviousEndTime = LocalActionCooldownEndTimes.Find(CooldownTag))
+	{
+		if (Now >= *PreviousEndTime &&
+			Now - *PreviousEndTime <= World->GetDeltaSeconds())
+		{
+			StartTime = *PreviousEndTime;
+		}
+	}
+
+	LocalActionCooldownEndTimes.Add(CooldownTag, StartTime + Duration);
+}
+
+bool UPDAbilitySystemComponent::IsLocalActionCooldownActive(
+	FGameplayTag CooldownTag) const
+{
+	const UWorld* World = GetWorld();
+	const double* EndTime = LocalActionCooldownEndTimes.Find(CooldownTag);
+
+	// 같은 시각끼리의 비교가 부동소수 오차로 막히지 않게 아주 작은 여유를 둔다.
+	constexpr double TimeTolerance = 1.0e-4;
+	return World && EndTime &&
+		World->GetTimeSeconds() + TimeTolerance < *EndTime;
+}
+
+float UPDAbilitySystemComponent::GetActionCooldownRemaining(
+	FGameplayTag CooldownTag) const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !CooldownTag.IsValid())
+	{
+		return 0.0f;
+	}
+
+	if (AbilityActorInfo.IsValid() && AbilityActorInfo->IsLocallyControlled())
+	{
+		const double* EndTime = LocalActionCooldownEndTimes.Find(CooldownTag);
+		return EndTime
+			? FMath::Max(0.0f, static_cast<float>(*EndTime - World->GetTimeSeconds()))
+			: 0.0f;
+	}
+
+	float Remaining = 0.0f;
+	const FGameplayEffectQuery Query = FGameplayEffectQuery::MakeQuery_MatchAnyOwningTags(
+		FGameplayTagContainer(CooldownTag));
+	for (const float EffectRemaining : GetActiveEffectsTimeRemaining(Query))
+	{
+		Remaining = FMath::Max(Remaining, EffectRemaining);
+	}
+	return Remaining;
 }
 
 bool UPDAbilitySystemComponent::RevokeAbilityByHandle(

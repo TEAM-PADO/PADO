@@ -45,7 +45,8 @@ public:
 
 	/**
 	 * 재사용 대기시간이다. 비워 두면 입력이 들어오는 대로 실행한다.
-	 * 몽타주도 Channel 수명주기도 없는 Action은 이 값이 유일한 발사 간격이다.
+	 * 몽타주도 Channel 수명주기도 없는 Single Action은 이 값이 유일한 실행 간격이다.
+	 * Fire Action은 이 값을 쓰지 않는다. 발 간격은 ShotInterval이 정한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Action")
 	FPDActionCooldownStruct ActionCooldown;

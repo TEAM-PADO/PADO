@@ -7,7 +7,6 @@
 #include "GameplayEffect.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Definition/PDAbilityDefinition.h"
-#include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/AbilitySystem/Effect/PDGE_ActionCooldown.h"
 #include "PADO/AbilitySystem/Fragment/PDActionExecutionContext.h"
 #include "PADO/AbilitySystem/Fragment/PDActionFragment.h"
@@ -78,6 +77,25 @@ bool UPDGA_Base::CanActivateAbility(
 
 	// 필수 Fragment의 전제 조건을 활성화 전에 본다. 소유 클라이언트가 예측할 때
 	// 같은 판정을 하므로, 서버가 거부할 발사를 미리 걸러 헛연출을 줄인다.
+	return !GatesActivationOnPredictedState() ||
+		PassesPredictedStateGate(*Definition, Handle, ActorInfo);
+}
+
+bool UPDGA_Base::GatesActivationOnPredictedState() const
+{
+	return true;
+}
+
+bool UPDGA_Base::UsesLocalTriggerInput() const
+{
+	return false;
+}
+
+bool UPDGA_Base::PassesPredictedStateGate(
+	const UPDAbilityDefinition& Definition,
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo) const
+{
 	UAbilitySystemComponent* AbilitySystem =
 		ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (!AbilitySystem)
@@ -92,9 +110,11 @@ bool UPDGA_Base::CanActivateAbility(
 	GateContext.SourceAbilitySystem = AbilitySystem;
 	GateContext.SourceActor = ActorInfo->AvatarActor.Get();
 	GateContext.EffectSourceObject = Spec ? Spec->SourceObject.Get() : nullptr;
-	GateContext.bIsPredicting = !AbilitySystem->IsOwnerActorAuthoritative();
+	GateContext.ExecutionScope = AbilitySystem->IsOwnerActorAuthoritative()
+		? EPDActionExecutionScope::Authority
+		: EPDActionExecutionScope::Predicting;
 
-	for (const FPDActionHookStruct& Hook : Definition->ActionHooks)
+	for (const FPDActionHookStruct& Hook : Definition.ActionHooks)
 	{
 		for (const UPDActionFragment* Fragment : Hook.Fragments)
 		{
@@ -134,11 +154,23 @@ bool UPDGA_Base::CheckCooldown(
 		return true;
 	}
 
+	// 다른 머신이 조종하는 요청은 그 머신이 자기 시계로 이미 판정했다. 서버의
+	// 쿨다운은 요청이 도착한 시점에 시작해 한 박자 늦게 끝나므로, 여기서 다시
+	// 막으면 지연만큼 정상 요청을 거부하게 된다.
+	if (!ActorInfo || !ActorInfo->IsLocallyControlled())
+	{
+		return true;
+	}
+
 	const UAbilitySystemComponent* AbilitySystem =
-		ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
-	if (!AbilitySystem ||
-		!AbilitySystem->HasMatchingGameplayTag(
-			Definition->ActionCooldown.CooldownTag))
+		ActorInfo->AbilitySystemComponent.Get();
+	const UPDAbilitySystemComponent* PDAbilitySystem =
+		Cast<UPDAbilitySystemComponent>(AbilitySystem);
+	const FGameplayTag& CooldownTag = Definition->ActionCooldown.CooldownTag;
+	const bool bCoolingDown = PDAbilitySystem
+		? PDAbilitySystem->IsLocalActionCooldownActive(CooldownTag)
+		: AbilitySystem && AbilitySystem->HasMatchingGameplayTag(CooldownTag);
+	if (!bCoolingDown)
 	{
 		return true;
 	}
@@ -178,23 +210,29 @@ void UPDGA_Base::ApplyCooldown(
 	}
 
 	// 점유할 슬롯과 지속시간을 Spec에 실어 보낸다. 그래서 Action마다 GE 에셋을
-	// 따로 만들지 않아도 된다.
+	// 따로 만들지 않아도 된다. 이 GE는 다른 머신에 보여 줄 상태다.
 	CooldownSpec.Data->DynamicGrantedTags.AddTag(
 		Definition->ActionCooldown.CooldownTag);
-	// 자동 발사는 클라 반복 간격과 쿨다운이 같으면 매 발 경합한다.
-	// Definition이 정한 실제 강제 지속시간을 쓴다.
-	const UPDSingleActionDefinition* SingleAction =
-		Cast<UPDSingleActionDefinition>(Definition);
 	CooldownSpec.Data->SetSetByCallerMagnitude(
 		TAG_PD_Data_Cooldown_Duration,
-		SingleAction
-			? SingleAction->GetEnforcedCooldownDuration()
-			: Definition->ActionCooldown.Duration);
+		Definition->ActionCooldown.Duration);
 	ApplyGameplayEffectSpecToOwner(
 		Handle,
 		ActorInfo,
 		ActivationInfo,
 		CooldownSpec);
+
+	// 판정은 조종하는 머신이 자기가 시작한 시각으로 한다. GE가 예측 적용되지
+	// 않는 경우(예측 창 밖의 Commit)에도 같은 기록이 남는다.
+	UPDAbilitySystemComponent* PDAbilitySystem = ActorInfo
+		? Cast<UPDAbilitySystemComponent>(ActorInfo->AbilitySystemComponent.Get())
+		: nullptr;
+	if (PDAbilitySystem && ActorInfo->IsLocallyControlled())
+	{
+		PDAbilitySystem->BeginLocalActionCooldown(
+			Definition->ActionCooldown.CooldownTag,
+			Definition->ActionCooldown.Duration);
+	}
 }
 
 void UPDGA_Base::ActivateAbility(
@@ -267,6 +305,12 @@ void UPDGA_Base::AddRequiredActionHook(FGameplayTag HookTag)
 	}
 }
 
+void UPDGA_Base::ResetActionHookContract()
+{
+	SupportedActionHooks.Reset();
+	RequiredActionHooks.Reset();
+}
+
 bool UPDGA_Base::ExecuteActionHook(
 	FGameplayTag HookTag,
 	UAbilitySystemComponent* TargetAbilitySystem,
@@ -274,25 +318,37 @@ bool UPDGA_Base::ExecuteActionHook(
 	const FHitResult* HitResult,
 	const FHitResult* ShotResult)
 {
-	UAbilitySystemComponent* SourceAbilitySystem =
-		GetAbilitySystemComponentFromActorInfo();
 	const FPDActionHookStruct* Hook = ActiveDefinition
 		? ActiveDefinition->FindActionHook(HookTag)
 		: nullptr;
-	if (!SourceAbilitySystem || !Hook)
+	if (!GetAbilitySystemComponentFromActorInfo() || !Hook)
 	{
 		return false;
 	}
 
+	return ExecuteHookFragments(
+		HookTag,
+		*Hook,
+		MakeHookContext(TargetAbilitySystem, TargetActor, HitResult, ShotResult));
+}
+
+FPDActionExecutionContext UPDGA_Base::MakeHookContext(
+	UAbilitySystemComponent* TargetAbilitySystem,
+	AActor* TargetActor,
+	const FHitResult* HitResult,
+	const FHitResult* ShotResult) const
+{
 	FPDActionExecutionContext Context;
-	Context.Ability = this;
-	Context.SourceAbilitySystem = SourceAbilitySystem;
+	Context.Ability = const_cast<UPDGA_Base*>(this);
+	Context.SourceAbilitySystem = GetAbilitySystemComponentFromActorInfo();
 	Context.TargetAbilitySystem = TargetAbilitySystem;
 	Context.SourceActor = GetAvatarActorFromActorInfo();
 	Context.TargetActor = TargetActor;
 	Context.EffectSourceObject = GetCurrentSourceObject();
 	Context.InputChargeAlpha = ExecutionChargeAlpha;
-	Context.bIsPredicting = !Context.IsAuthoritative();
+	Context.ExecutionScope = Context.IsAuthoritative()
+		? EPDActionExecutionScope::Authority
+		: EPDActionExecutionScope::Predicting;
 	if (HitResult)
 	{
 		Context.HitResult = *HitResult;
@@ -303,9 +359,22 @@ bool UPDGA_Base::ExecuteActionHook(
 		Context.ShotResult = *ShotResult;
 		Context.bHasShotResult = true;
 	}
+	return Context;
+}
 
+bool UPDGA_Base::ExecuteHookFragments(
+	FGameplayTag HookTag,
+	const FPDActionHookStruct& Hook,
+	const FPDActionExecutionContext& Context)
+{
+	if (!Context.SourceAbilitySystem)
+	{
+		return false;
+	}
+
+	AActor* TargetActor = Context.TargetActor;
 	TArray<const UPDActionFragment*, TInlineAllocator<8>> ExecutableFragments;
-	for (const UPDActionFragment* Fragment : Hook->Fragments)
+	for (const UPDActionFragment* Fragment : Hook.Fragments)
 	{
 		if (!IsValid(Fragment))
 		{
@@ -317,9 +386,10 @@ bool UPDGA_Base::ExecuteActionHook(
 			return false;
 		}
 
-		// 예측 실행에서는 되돌릴 수 있는 것만 돌린다. 나머지는 서버가 한다.
-		// 여기서 한 번에 거르므로 Fragment마다 권한 분기를 두지 않는다.
-		if (Context.bIsPredicting && !Fragment->SupportsLocalPrediction())
+		// 예측 실행은 되돌릴 수 있는 것만, 연출 전용 실행은 연출만, 결과 전용
+		// 실행은 결과만 돌린다. 여기서 한 번에 거르므로 Fragment마다 권한 분기를
+		// 두지 않는다.
+		if (!Context.AllowsFragment(*Fragment))
 		{
 			continue;
 		}

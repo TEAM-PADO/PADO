@@ -69,7 +69,112 @@ bool UPDWeaponMagazineComponent::CanConsumeRoundWithReplicatedState() const
 	const bool bInitialized =
 		Owner && Owner->HasAuthority() ? bMagazineInitialized : true;
 	return bInitialized && ResolveMagazineTrait() != nullptr && !bIsReloading &&
-		CurrentMagazineAmmo > 0;
+		!bReloadRequested && GetCurrentMagazineAmmo() > 0;
+}
+
+int32 UPDWeaponMagazineComponent::GetCurrentMagazineAmmo() const
+{
+	return FMath::Max(0, CurrentMagazineAmmo - GetUnprocessedLocalShotCount());
+}
+
+void UPDWeaponMagazineComponent::BeginLocalShotSession(
+	FGameplayAbilitySpecHandle AbilityHandle,
+	int32 LastShotIndex)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || Owner->HasAuthority())
+	{
+		return;
+	}
+
+	LocalShot.AbilityHandle = AbilityHandle;
+	LocalShot.ShotIndex = FMath::Max(0, LastShotIndex);
+	BroadcastMagazineChanged();
+}
+
+void UPDWeaponMagazineComponent::EndLocalShotSession(
+	FGameplayAbilitySpecHandle AbilityHandle)
+{
+	if (LocalShot.AbilityHandle != AbilityHandle)
+	{
+		return;
+	}
+
+	// 무기를 놓은 뒤 서버는 남은 발을 버린다. 그 발을 계속 빼고 보여 주면
+	// 다시 주웠을 때 탄약이 모자란 것으로 보인다.
+	LocalShot = FPDMagazineShotMarkStruct();
+	BroadcastMagazineChanged();
+}
+
+void UPDWeaponMagazineComponent::RecordLocalShot(
+	FGameplayAbilitySpecHandle AbilityHandle,
+	int32 ShotIndex)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || Owner->HasAuthority())
+	{
+		return;
+	}
+
+	LocalShot.AbilityHandle = AbilityHandle;
+	LocalShot.ShotIndex = ShotIndex;
+	BroadcastMagazineChanged();
+}
+
+void UPDWeaponMagazineComponent::RecordProcessedShot(
+	FGameplayAbilitySpecHandle AbilityHandle,
+	int32 ShotIndex)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		return;
+	}
+
+	ProcessedShot.AbilityHandle = AbilityHandle;
+	ProcessedShot.ShotIndex = ShotIndex;
+}
+
+int32 UPDWeaponMagazineComponent::GetUnprocessedLocalShotCount() const
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || Owner->HasAuthority() || !LocalShot.AbilityHandle.IsValid())
+	{
+		return 0;
+	}
+
+	// 처리 기록이 다른 Spec 것이면 이번 Spec의 발은 아직 하나도 처리되지 않았다.
+	const int32 ProcessedIndex =
+		ProcessedShot.AbilityHandle == LocalShot.AbilityHandle
+			? ProcessedShot.ShotIndex
+			: 0;
+	return FMath::Max(0, LocalShot.ShotIndex - ProcessedIndex);
+}
+
+bool UPDWeaponMagazineComponent::CanRequestReload() const
+{
+	return ResolveMagazineTrait() != nullptr && !bIsReloading &&
+		!bReloadRequested && GetCurrentMagazineAmmo() < GetMagazineCapacity();
+}
+
+void UPDWeaponMagazineComponent::MarkReloadRequested()
+{
+	bReloadRequested = true;
+}
+
+void UPDWeaponMagazineComponent::ClearReloadRequest()
+{
+	bReloadRequested = false;
+}
+
+void UPDWeaponMagazineComponent::ResolveReloadRequest()
+{
+	// 몽타주가 없는 재장전은 재장전 상태 없이 탄창만 찬다. 가득 찬 탄창이 답이다.
+	// 몽타주 재장전은 OnRep_ReloadState가, 거부는 Held Item Component가 푼다.
+	if (bIsReloading || GetCurrentMagazineAmmo() >= GetMagazineCapacity())
+	{
+		ClearReloadRequest();
+	}
 }
 
 bool UPDWeaponMagazineComponent::CanConsumeRound(FString& OutError) const
@@ -220,10 +325,21 @@ void UPDWeaponMagazineComponent::GetLifetimeReplicatedProps(
 	DOREPLIFETIME(UPDWeaponMagazineComponent, bIsReloading);
 	DOREPLIFETIME(UPDWeaponMagazineComponent, ReloadEndServerTime);
 	DOREPLIFETIME(UPDWeaponMagazineComponent, ReloadCancelCounter);
+	DOREPLIFETIME_CONDITION(
+		UPDWeaponMagazineComponent,
+		ProcessedShot,
+		COND_OwnerOnly);
 }
 
 void UPDWeaponMagazineComponent::OnRep_CurrentMagazineAmmo()
 {
+	ResolveReloadRequest();
+	BroadcastMagazineChanged();
+}
+
+void UPDWeaponMagazineComponent::OnRep_ProcessedShot()
+{
+	ResolveReloadRequest();
 	BroadcastMagazineChanged();
 }
 
@@ -241,6 +357,9 @@ void UPDWeaponMagazineComponent::OnRep_ReloadState()
 		PlayReloadMontage();
 	}
 
+	// 서버가 재장전을 시작했거나, 시작한 뒤 바로 취소했다. 어느 쪽이든 요청에 대한
+	// 답이다. 요청은 재장전 중이 아닐 때만 보내므로 이전 재장전의 소식일 수 없다.
+	ClearReloadRequest();
 	BroadcastReloadStateChanged();
 }
 
@@ -368,7 +487,7 @@ void UPDWeaponMagazineComponent::CompleteReload()
 
 void UPDWeaponMagazineComponent::BroadcastMagazineChanged()
 {
-	OnMagazineChanged.Broadcast(CurrentMagazineAmmo, GetMagazineCapacity());
+	OnMagazineChanged.Broadcast(GetCurrentMagazineAmmo(), GetMagazineCapacity());
 }
 
 void UPDWeaponMagazineComponent::BroadcastReloadStateChanged()

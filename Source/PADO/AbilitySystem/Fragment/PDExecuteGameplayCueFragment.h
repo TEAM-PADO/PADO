@@ -37,6 +37,7 @@ public:
 	virtual bool Validate(FString& OutError) const override;
 	virtual bool SupportsDeferredExecution() const override;
 	virtual bool SupportsLocalPrediction() const override;
+	virtual bool IsPresentationOnly() const override;
 	virtual bool RequiresShotResult() const override;
 	virtual bool CanExecute(
 		const FPDActionExecutionContext& Context,
@@ -59,9 +60,26 @@ public:
 	 * 서버가 발사를 거부하면 이미 재생된 연출은 되돌릴 수 없다. 한 프레임짜리
 	 * 연출만 켜고, 탄착처럼 서버가 정한 위치가 필요한 것은 켜지 않는다.
 	 * 그래서 Target Scope에는 쓸 수 없다.
+	 *
+	 * Fire Action에서는 보지 않는다. Fire Action은 판정을 쏜 머신이 하므로
+	 * 모든 Cue를 각 머신에서 바로 재생한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Settings")
 	bool bPredictOnOwningClient = false;
+
+	/**
+	 * 몇 발마다 재생할지 정한다. 1이면 매 발, 3이면 첫 발과 그 뒤 3발마다다.
+	 * 트레이서를 몇 발에 한 번만 보여 줄 때 쓴다.
+	 *
+	 * 발 번호는 Fire Action만 싣는다. 발 번호가 없는 실행에서는 매번 재생한다.
+	 * 발 번호는 모든 머신이 같은 값을 보므로, 어느 발에 붙는지도 같다.
+	 */
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "Settings",
+		meta = (ClampMin = "1", UIMin = "1", UIMax = "10"))
+	int32 PlayEveryNthShot = 1;
 
 	/**
 	 * 이번 발이 멈춘 곳에서 재생한다. 트레이서와 탄착 연출에 켠다.
@@ -140,6 +158,9 @@ public:
 	bool ResolveItemSocketLocation(
 		const AActor* EffectCauser,
 		FVector& OutLocation) const;
+
+	/** 발 번호가 PlayEveryNthShot 주기에 해당하는가. 발 번호가 없으면 언제나 참이다. */
+	bool ShouldPlayForShot(int32 ShotIndex) const;
 
 private:
 	/** 이 Cue가 위치와 방향의 기준으로 삼을 HitResult다. 없으면 nullptr다. */

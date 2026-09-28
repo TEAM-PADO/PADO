@@ -72,14 +72,22 @@ public:
 	bool ReleaseHeldItemUse();
 
 	/**
-	 * 로컬에서 한 발을 보낸 순간 발생한다. 서버 확정을 기다리지 않는다.
+	 * 이 머신에서 한 발이 실제로 나간 순간 발생한다. 서버 확정을 기다리지 않는다.
 	 *
-	 * 자동 발사는 클라이언트가 간격을 돌리고 서버가 쿨다운으로 강제하므로,
-	 * 발사마다 이 신호가 한 번씩 나간다.
+	 * Single Action은 Press로 활성화된 순간이 한 발이다. Fire Action은 Press가
+	 * 발이 아니므로 Action이 발마다 NotifyLocalShotFired로 알린다.
 	 */
 	FPDHeldItemFiredSignature OnLocalShotFired;
 
-	/** 로컬 입력 의도를 서버로 보내 현재 Reloadable Held Item의 재장전을 요청한다. */
+	/** 발을 쏜 Action이 부른다. 반동처럼 발마다 반응하는 쪽이 OnLocalShotFired로 받는다. */
+	void NotifyLocalShotFired(APDWorldItemActor* Item);
+
+	/**
+	 * 로컬 입력 의도를 서버로 보내 현재 Reloadable Held Item의 재장전을 요청한다.
+	 *
+	 * 소유 클라이언트는 예측 탄약으로 재장전이 가능할 때만 보내고, 보낸 순간부터
+	 * 서버의 답이 올 때까지 발사를 멈춘다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "PD|Item")
 	bool TryReloadHeldItem();
 
@@ -128,6 +136,13 @@ protected:
 
 	UFUNCTION(Server, Reliable)
 	void ServerReloadHeldItem();
+
+	/**
+	 * 서버가 재장전 요청을 거부했다. 알리지 않으면 소유 클라이언트는 요청을 보낸
+	 * 뒤 멈춘 발사가 풀리지 않는다.
+	 */
+	UFUNCTION(Client, Reliable)
+	void ClientRejectReload();
 
 	UFUNCTION()
 	void OnRep_HeldItem();
@@ -185,6 +200,9 @@ private:
 	void HandleAutomaticFire();
 	bool SendShot(APDWorldItemActor* Item);
 
+	/** Press로 활성화된 순간이 곧 한 발인가. Fire Action처럼 발을 따로 세면 아니다. */
+	bool DoesPressFireShot(const APDWorldItemActor* Item) const;
+
 	/** 자동이 아니면 0을 돌려준다. */
 	float ResolveAutomaticFireInterval(const APDWorldItemActor* Item) const;
 
@@ -195,4 +213,7 @@ private:
 	TWeakObjectPtr<APDWorldItemActor> InputPressedItem;
 
 	FGameplayAbilitySpecHandle InputPressedAbilityHandle;
+
+	/** 재장전을 요청한 아이템이다. 서버가 거부하면 이 아이템의 요청 상태를 푼다. */
+	TWeakObjectPtr<APDWorldItemActor> ReloadRequestedItem;
 };

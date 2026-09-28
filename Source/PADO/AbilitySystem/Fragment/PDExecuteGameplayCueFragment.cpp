@@ -5,6 +5,7 @@
 #include "Components/MeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
 #include "PADO/AbilitySystem/Ability/PDGA_Base.h"
 #include "PADO/AbilitySystem/Fragment/PDActionExecutionContext.h"
@@ -59,6 +60,11 @@ bool UPDExecuteGameplayCueFragment::SupportsLocalPrediction() const
 	return bPredictOnOwningClient;
 }
 
+bool UPDExecuteGameplayCueFragment::IsPresentationOnly() const
+{
+	return true;
+}
+
 bool UPDExecuteGameplayCueFragment::RequiresShotResult() const
 {
 	return bPlayAtShotEnd;
@@ -69,7 +75,7 @@ bool UPDExecuteGameplayCueFragment::CanExecute(
 	FString& OutError) const
 {
 	OutError.Reset();
-	if (!Context.IsAuthoritativeOrPredicting() ||
+	if (!Context.CanPlayPresentation() ||
 		!Context.ResolveScopedAbilitySystem(ApplicationScope) ||
 		!IsValid(Context.ResolveScopedActor(ApplicationScope)))
 	{
@@ -92,10 +98,16 @@ bool UPDExecuteGameplayCueFragment::Execute(
 	UAbilitySystemComponent* ScopedAbilitySystem =
 		Context.ResolveScopedAbilitySystem(ApplicationScope);
 	AActor* ScopedActor = Context.ResolveScopedActor(ApplicationScope);
-	if (!Context.IsAuthoritativeOrPredicting() || !ScopedAbilitySystem ||
+	if (!Context.CanPlayPresentation() || !ScopedAbilitySystem ||
 		!IsValid(ScopedActor) || !CueTag.IsValid())
 	{
 		return false;
+	}
+
+	// 주기에 해당하지 않는 발은 건너뛴다. 실패가 아니다.
+	if (!ShouldPlayForShot(Context.ShotIndex))
+	{
+		return true;
 	}
 
 	const FHitResult* CueHit = ResolveCueHit(Context);
@@ -189,8 +201,24 @@ bool UPDExecuteGameplayCueFragment::Execute(
 		}
 	}
 
+	// 연출 전용 실행은 머신마다 따로 한다. 복제하면 다른 머신에서 두 번 재생된다.
+	if (Context.ExecutionScope == EPDActionExecutionScope::PresentationOnly)
+	{
+		UGameplayCueManager::ExecuteGameplayCue_NonReplicated(
+			ScopedActor,
+			CueTag,
+			CueParameters);
+		return true;
+	}
+
 	ScopedAbilitySystem->ExecuteGameplayCue(CueTag, CueParameters);
 	return true;
+}
+
+bool UPDExecuteGameplayCueFragment::ShouldPlayForShot(int32 ShotIndex) const
+{
+	return ShotIndex <= 0 || PlayEveryNthShot <= 1 ||
+		(ShotIndex - 1) % PlayEveryNthShot == 0;
 }
 
 FVector UPDExecuteGameplayCueFragment::ResolveDirection(

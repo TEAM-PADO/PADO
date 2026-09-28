@@ -31,6 +31,15 @@ public:
 	virtual bool SupportsLocalPrediction() const;
 
 	/**
+	 * 게임 상태를 바꾸지 않고 보이는 것만 만드는가.
+	 *
+	 * Fire Action은 이런 Fragment를 각 머신에서 복제 없이 실행하고, 나머지는
+	 * 서버에서만 실행한다. SupportsLocalPrediction과 다르다. 그쪽은 서버 확정
+	 * 전에 미리 재생해도 되는지 저작자가 고르는 스위치다.
+	 */
+	virtual bool IsPresentationOnly() const;
+
+	/**
 	 * 이번 발이 멈춘 곳(ShotResult)이 있어야 동작하는가.
 	 * 그런 Fragment는 OnExecuteStart에만 둘 수 있고, 결과를 만드는 Targeting이
 	 * 필요하다. Definition 검증이 이 둘을 확인한다.

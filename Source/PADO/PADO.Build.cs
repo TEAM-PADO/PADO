@@ -20,7 +20,8 @@ public class PADO : ModuleRules
 			"GameplayTasks"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara" });
+		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "PhysicsCore" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

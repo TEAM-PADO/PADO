@@ -481,6 +481,13 @@ void APDWorldItemActor::HandleRuntimeItemStateChanged(
 	{
 		MagazineComponent->CancelReload();
 	}
+
+	// 손을 떠났거나 새로 들었으면 이전 소유자가 보내 둔 재장전 요청은 의미가 없다.
+	// 남겨 두면 다시 주웠을 때 답이 오지 않는 요청 때문에 쏠 수 없다.
+	if (MagazineComponent)
+	{
+		MagazineComponent->ClearReloadRequest();
+	}
 }
 
 void APDWorldItemActor::GetLifetimeReplicatedProps(

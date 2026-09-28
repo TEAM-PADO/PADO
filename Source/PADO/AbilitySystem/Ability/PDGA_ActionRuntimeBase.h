@@ -91,10 +91,13 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UPDAbilityTask_PlayActionMontage> ActiveMontageTask;
 
+	FPDActionTargetingContext BuildTargetingContext() const;
+
+	/** 이번 활성화의 원본 아이템이다. 아이템이 아닌 Source면 nullptr다. */
+	APDWorldItemActor* GetActiveSourceItem() const;
+
 private:
 	friend class UPDAbilityTask_ActionTraceWindow;
-
-	FPDActionTargetingContext BuildTargetingContext() const;
 
 	/**
 	 * 열린 실행 구간의 OnExecuteStart Hook을 실행한다. 실행 구간에 진입한 모든

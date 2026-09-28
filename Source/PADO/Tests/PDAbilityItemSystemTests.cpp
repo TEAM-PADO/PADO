@@ -12,6 +12,8 @@
 #include "GameplayEffect.h"
 #include "PADO/AbilitySystem/Ability/PDGA_Action.h"
 #include "PADO/AbilitySystem/Ability/PDGA_ChannelAction.h"
+#include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
+#include "PADO/AbilitySystem/Definition/PDFireActionDefinition.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Definition/PDChannelActionDefinition.h"
@@ -99,14 +101,17 @@ bool FPDActionDefinitionValidationTest::RunTest(const FString& Parameters)
 	UPDChannelActionDefinition* Channel =
 		NewObject<UPDChannelActionDefinition>();
 	Channel->ActionTargeting = NewObject<UPDSelfTargeting>(Channel);
-	Channel->ExecutionMode = EPDChannelExecutionMode::FixedInterval;
-	Channel->PulseInterval = 0.1f;
 	FPDActionHookStruct ChannelHook;
 	ChannelHook.HookTag = TAG_PD_ActionHook_OnExecute;
 	AddEffectFragment(Channel, ChannelHook);
 	Channel->ActionHooks.Add(MoveTemp(ChannelHook));
+	// 실행 시점은 몽타주의 Notify뿐이다. 고정 간격 실행은 Fire Action으로 옮겼다.
+	TestFalse(
+		TEXT("Channel Action은 Montage 없이 사용할 수 없다."),
+		Channel->ValidateWithActionContract(Error));
+	Channel->ActionMontage.Montage = NewObject<UAnimMontage>(Channel);
 	TestTrue(
-		TEXT("Fixed Interval Channel Action은 Montage 없이 유효하다."),
+		TEXT("Montage를 가진 Channel Action은 유효하다."),
 		Channel->ValidateWithActionContract(Error));
 
 	TestTrue(
@@ -117,6 +122,59 @@ bool FPDActionDefinitionValidationTest::RunTest(const FString& Parameters)
 		TEXT("Channel Action Ability 클래스는 코드로 고정된다."),
 		Channel->GetAbilityClass() == UPDGA_ChannelAction::StaticClass());
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionDefinitionValidationTest,
+	"PADO.GAS.Definition.FireAction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionDefinitionValidationTest::RunTest(const FString& Parameters)
+{
+	using namespace PDAbilityItemSystemTests;
+	FString Error;
+
+	auto MakeFireDefinition = [](TSubclassOf<UPDActionTargeting> TargetingClass)
+	{
+		UPDFireActionDefinition* Definition = NewObject<UPDFireActionDefinition>();
+		Definition->ActionTargeting =
+			NewObject<UPDActionTargeting>(Definition, TargetingClass);
+		FPDActionHookStruct Hook;
+		Hook.HookTag = TAG_PD_ActionHook_OnExecute;
+		AddEffectFragment(Definition, Hook);
+		Definition->ActionHooks.Add(MoveTemp(Hook));
+		return Definition;
+	};
+
+	UPDFireActionDefinition* Fire =
+		MakeFireDefinition(UPDAimLineTraceTargeting::StaticClass());
+	TestTrue(TEXT("Aim Line Trace Fire Action은 유효하다."),
+		Fire->ValidateWithActionContract(Error));
+	TestTrue(TEXT("Fire Action Ability 클래스는 코드로 고정된다."),
+		Fire->GetAbilityClass() == UPDGA_FireAction::StaticClass());
+
+	// 발 간격이 0이면 발사 일정이 한자리에서 끝없이 쏜다.
+	Fire->ShotInterval = 0.0f;
+	TestFalse(TEXT("발 간격이 0이면 거부한다."), Fire->ValidateWithActionContract(Error));
+	Fire->ShotInterval = 0.1f;
+
+	// 무기를 드는 순간은 발사와 무관하다. 발 단위 Hook만 받는다.
+	FPDActionHookStruct StartHook;
+	StartHook.HookTag = TAG_PD_ActionHook_OnStart;
+	AddEffectFragment(Fire, StartHook);
+	Fire->ActionHooks.Add(MoveTemp(StartHook));
+	TestFalse(TEXT("Fire Action은 OnStart Hook을 받지 않는다."),
+		Fire->ValidateWithActionContract(Error));
+
+	TestFalse(
+		TEXT("몽타주 구간이 대상을 정하는 Targeting은 쓸 수 없다."),
+		MakeFireDefinition(UPDItemSocketTrailTargeting::StaticClass())
+			->ValidateWithActionContract(Error));
+	TestFalse(
+		TEXT("활성화 대상이 필요한 Targeting은 쓸 수 없다."),
+		MakeFireDefinition(UPDEventTargeting::StaticClass())
+			->ValidateWithActionContract(Error));
 	return true;
 }
 

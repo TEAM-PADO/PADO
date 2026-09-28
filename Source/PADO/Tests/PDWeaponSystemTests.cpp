@@ -19,9 +19,17 @@
 #include "GameplayEffectTypes.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "GameFramework/PlayerState.h"
+#include "GameplayAbilitySpec.h"
+#include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
+#include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Cue/PDGameplayCueNotify_Tracer.h"
+#include "PADO/AbilitySystem/Definition/PDFireActionDefinition.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/AbilitySystem/Effect/PDGE_ActionCooldown.h"
+#include "PADO/AbilitySystem/Fragment/PDActionExecutionContext.h"
+#include "PADO/AbilitySystem/Fragment/PDApplyGameplayEffectFragment.h"
 #include "PADO/AbilitySystem/Struct/PDActionHookStruct.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/AbilitySystem/Targeting/PDAimLineTraceTargeting.h"
@@ -62,9 +70,9 @@ namespace PDWeaponSystemTests
 		// 스켈레탈 메시가 없어 몽타주를 재생할 수 없으므로 이 경로를 쓴다.
 		Weapon->Traits.Add(MagazineTrait);
 
-		// 자동 소총도 한 발이 한 활성화다. 누르고 있는 동안 활성화를 다시 여는
-		// 방식이며, 연사 주기는 서버가 강제하는 쿨다운과 같은 값이다.
-		// 이어지는 채널(화염방사기 같은)만 Channel Action을 쓴다.
+		// Single Action의 자동 반복 옵션(bAutomatic)을 검증하는 정의다. 누르고 있는
+		// 동안 활성화를 다시 열고, 반복 주기는 쿨다운과 같은 값이다. 실제 총기
+		// 에셋은 Fire Action이며 PDFireActionTests가 따로 검증한다.
 		UPDSingleActionDefinition* Action =
 			NewObject<UPDSingleActionDefinition>(Weapon);
 		Action->ActionTargeting = NewObject<UPDSelfTargeting>(Action);
@@ -88,9 +96,9 @@ namespace PDWeaponSystemTests
 	/**
 	 * 타이머와 월드 시간을 함께 진행시킨다.
 	 *
-	 * TimerManager만 돌리면 GameplayEffect 지속시간이 흐르지 않는다. 발사
-	 * 간격을 쿨다운 GE로 강제하므로, 월드 시간을 같이 올리지 않으면 두 번째
-	 * 발사가 영원히 막힌다.
+	 * TimerManager만 돌리면 월드 시간이 흐르지 않는다. 쿨다운은 월드 시간으로
+	 * 판정하므로, 같이 올리지 않으면 두 번째 발사가 영원히 막힌다. 프레임
+	 * 길이도 실제 프레임처럼 맞춰 둔다. 쿨다운이 프레임 오차를 흡수할 때 쓴다.
 	 */
 	void AdvanceTestWorld(UWorld* World, float DeltaSeconds)
 	{
@@ -108,6 +116,7 @@ namespace PDWeaponSystemTests
 		++GFrameCounter;
 		World->TimeSeconds += DeltaSeconds;
 		World->UnpausedTimeSeconds += DeltaSeconds;
+		World->DeltaTimeSeconds = DeltaSeconds;
 		World->GetTimerManager().Tick(DeltaSeconds);
 	}
 
@@ -183,7 +192,7 @@ bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
 		5,
 		false);
 
-	TestTrue(TEXT("30발 FixedInterval Assault Definition은 유효하다."),
+	TestTrue(TEXT("30발 자동 Single Assault Definition은 유효하다."),
 		Assault->Validate(Error));
 	TestTrue(TEXT("5발 Single Sniper Definition은 유효하다."),
 		Sniper->Validate(Error));
@@ -206,6 +215,15 @@ bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("실제 Assault Item DA 탄창은 30발이다."),
 				AssaultMagazine->Capacity, 30);
 		}
+
+		// 방아쇠로 쏘는 무기는 Fire Action이다. 실패하면 DA 이전이 남았다는 신호다.
+		const UPDFireActionDefinition* AssaultFire =
+			Cast<UPDFireActionDefinition>(AssaultAsset->UseAction);
+		if (TestNotNull(TEXT("실제 Assault Item DA는 Fire Action을 쓴다."), AssaultFire))
+		{
+			TestTrue(TEXT("실제 Assault Item DA는 자동 사격이다."),
+				AssaultFire->FireMode == EPDFireMode::Automatic);
+		}
 	}
 	if (TestNotNull(TEXT("Sniper Item DA를 로드한다."), SniperAsset))
 	{
@@ -216,6 +234,14 @@ bool FPDItemMagazineDefinitionValidationTest::RunTest(const FString& Parameters)
 		{
 			TestEqual(TEXT("실제 Sniper Item DA 탄창은 5발이다."),
 				SniperAssetMagazine->Capacity, 5);
+		}
+
+		const UPDFireActionDefinition* SniperFire =
+			Cast<UPDFireActionDefinition>(SniperAsset->UseAction);
+		if (TestNotNull(TEXT("실제 Sniper Item DA는 Fire Action을 쓴다."), SniperFire))
+		{
+			TestTrue(TEXT("실제 Sniper Item DA는 반자동 사격이다."),
+				SniperFire->FireMode == EPDFireMode::SemiAutomatic);
 		}
 	}
 
@@ -458,6 +484,132 @@ bool FPDWeaponInputFiringTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDLocalCooldownClockTest,
+	"PADO.GAS.Cooldown.LocalClock",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDLocalCooldownClockTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("쿨다운 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder))
+	{
+		UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
+		AbilitySystem->InitAbilityActorInfo(Holder, Holder);
+		const FGameplayTag CooldownTag =
+			FGameplayTag::RequestGameplayTag(TEXT("Cooldown.Weapon.Fire"));
+		auto SetFrame = [TestWorld](double Time, float FrameDelta)
+		{
+			TestWorld->TimeSeconds = Time;
+			TestWorld->DeltaTimeSeconds = FrameDelta;
+		};
+
+		SetFrame(0.0, 0.016f);
+		AbilitySystem->BeginLocalActionCooldown(CooldownTag, 0.1f);
+		TestTrue(TEXT("시작 직후에는 쿨다운 중이다."),
+			AbilitySystem->IsLocalActionCooldownActive(CooldownTag));
+		TestEqual(TEXT("UI는 로컬 기록의 남은 시간을 본다."),
+			AbilitySystem->GetActionCooldownRemaining(CooldownTag), 0.1f, 1.0e-4f);
+
+		SetFrame(0.1, 0.016f);
+		TestFalse(TEXT("시작한 시각에서 쿨다운만큼 지나면 끝난다."),
+			AbilitySystem->IsLocalActionCooldownActive(CooldownTag));
+
+		// 프레임 단위로 조금 늦게 불린 반복은 예정된 시각에 이어 센다.
+		// 호출 시각에서 새로 세면 늦은 만큼 간격이 매번 벌어진다.
+		SetFrame(0.13, 0.05f);
+		AbilitySystem->BeginLocalActionCooldown(CooldownTag, 0.1f);
+		TestEqual(TEXT("한 프레임 안에 늦은 반복은 예정 시각에 이어 센다."),
+			AbilitySystem->GetActionCooldownRemaining(CooldownTag), 0.07f, 1.0e-4f);
+
+		// 프레임이 길면 한 프레임에 반복이 둘 이상 몰린다. 둘 다 나가야 반복
+		// 속도가 프레임 속도와 무관해진다.
+		SetFrame(0.35, 0.16f);
+		TestFalse(TEXT("긴 프레임에서 첫 반복은 막히지 않는다."),
+			AbilitySystem->IsLocalActionCooldownActive(CooldownTag));
+		AbilitySystem->BeginLocalActionCooldown(CooldownTag, 0.1f);
+		TestFalse(TEXT("같은 프레임에 몰린 두 번째 반복도 막히지 않는다."),
+			AbilitySystem->IsLocalActionCooldownActive(CooldownTag));
+		AbilitySystem->BeginLocalActionCooldown(CooldownTag, 0.1f);
+		TestTrue(TEXT("밀린 반복을 다 소화하면 다시 쿨다운 중이다."),
+			AbilitySystem->IsLocalActionCooldownActive(CooldownTag));
+
+		// 한 프레임 넘게 지나서 누른 입력은 누른 시각부터 센다. 끝난 시각에 이어
+		// 세면 다음 입력이 쿨다운보다 짧은 간격으로 나갈 수 있다.
+		SetFrame(1.0, 0.016f);
+		AbilitySystem->BeginLocalActionCooldown(CooldownTag, 0.1f);
+		TestEqual(TEXT("늦게 누른 입력은 누른 시각부터 센다."),
+			AbilitySystem->GetActionCooldownRemaining(CooldownTag), 0.1f, 1.0e-4f);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDLocalCooldownOverReplicatedTest,
+	"PADO.Item.Weapon.Cooldown.IgnoresLateServerCooldown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDLocalCooldownOverReplicatedTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("쿨다운 발사 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
+		TestNotNull(TEXT("무기를 스폰한다."), Weapon))
+	{
+		UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
+		AbilitySystem->InitAbilityActorInfo(Holder, Holder);
+		TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder));
+		UPDHeldItemComponent* HeldItems = Holder->GetHeldItemComponent();
+		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Weapon, 5, true);
+		TestTrue(TEXT("쿨다운이 있는 무기를 초기화한다."), Weapon->InitializeItem(Definition));
+		Weapon->DispatchBeginPlay();
+		TestTrue(TEXT("무기를 줍는다."), HeldItems->TryPickUp(Weapon));
+		UPDWeaponMagazineComponent* Magazine = Weapon->GetMagazineComponent();
+		const FGameplayTag CooldownTag =
+			FGameplayTag::RequestGameplayTag(TEXT("Cooldown.Weapon.Fire"));
+
+		TestTrue(TEXT("첫 발을 쏜다."), HeldItems->PressHeldItemUse());
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("첫 발을 소비한다."), Magazine->GetCurrentMagazineAmmo(), 4);
+
+		TestFalse(TEXT("쿨다운 중에는 다시 쏠 수 없다."), HeldItems->PressHeldItemUse());
+		TestEqual(TEXT("쿨다운 중에는 탄약이 줄지 않는다."),
+			Magazine->GetCurrentMagazineAmmo(), 4);
+
+		// 타이머를 돌리지 않고 시간만 넘긴다. 쿨다운 GE가 아직 남아 있어,
+		// 서버 쿨다운이 늦게 끝나는 상황과 같다.
+		TestWorld->TimeSeconds += 0.1;
+		TestWorld->DeltaTimeSeconds = 0.016f;
+		TestTrue(TEXT("쿨다운 GE 태그는 아직 남아 있다."),
+			AbilitySystem->HasMatchingGameplayTag(CooldownTag));
+		TestTrue(TEXT("로컬 기록이 끝났으면 늦게 끝나는 GE에 막히지 않고 쏜다."),
+			HeldItems->PressHeldItemUse());
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("두 번째 발을 소비한다."), Magazine->GetCurrentMagazineAmmo(), 3);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPDItemInteractionInputTest,
 	"PADO.Item.Interaction.PickUpAndDrop",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -591,6 +743,7 @@ bool FPDGameplayCueTagTest::RunTest(const FString& Parameters)
 		TEXT("GameplayCue.Weapon.AssaultRifle.Fire"),
 		TEXT("GameplayCue.Weapon.AssaultRifle.Tracer"),
 		TEXT("GameplayCue.Weapon.SniperRifle.Fire"),
+		TEXT("GameplayCue.Weapon.SniperRifle.Tracer"),
 		TEXT("GameplayCue.Weapon.Impact.Default")
 	};
 
@@ -1273,6 +1426,711 @@ bool FPDTracerCueTest::RunTest(const FString& Parameters)
 	}
 
 	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+namespace PDFireActionTests
+{
+	using namespace PDWeaponSystemTests;
+
+	constexpr double Frame60 = 1.0 / 60.0;
+
+	UPDItemDefinition* MakeFireItemDefinition(
+		UObject* Outer,
+		int32 MagazineCapacity,
+		EPDFireMode FireMode,
+		float ShotInterval)
+	{
+		UPDItemDefinition* Weapon = NewObject<UPDItemDefinition>(Outer);
+		Weapon->ItemId = TAG_PD_Item_Id_Weapon_AssaultRifle;
+		Weapon->DisplayName = FText::FromString(TEXT("Automation Fire Weapon"));
+		Weapon->Presentation.StaticMesh = NewObject<UStaticMesh>(Weapon);
+		Weapon->Presentation.bSimulatePhysicsInWorld = false;
+		UPDItemMagazineTrait* MagazineTrait =
+			NewObject<UPDItemMagazineTrait>(Weapon);
+		MagazineTrait->Capacity = MagazineCapacity;
+		Weapon->Traits.Add(MagazineTrait);
+
+		UPDFireActionDefinition* Action =
+			NewObject<UPDFireActionDefinition>(Weapon);
+		Action->ActionTargeting = NewObject<UPDSelfTargeting>(Action);
+		Action->FireMode = FireMode;
+		Action->ShotInterval = ShotInterval;
+
+		FPDActionHookStruct ConsumeHook;
+		ConsumeHook.HookTag = TAG_PD_ActionHook_OnExecuteStart;
+		ConsumeHook.Fragments.Add(
+			NewObject<UPDConsumeMagazineAmmoFragment>(Action));
+		Action->ActionHooks.Add(MoveTemp(ConsumeHook));
+		Weapon->UseAction = Action;
+		return Weapon;
+	}
+
+	/**
+	 * 월드 시간과 타이머를 같은 양만큼 진행한다. 발사 일정은 월드 시간으로 발
+	 * 시각을 정하고 타이머로 깨어나므로, 둘이 어긋나면 발이 프레임 단위로 밀려
+	 * 셈이 흔들린다. 앞 프레임에 건 타이머를 먼저 반영하려고 빈 틱을 한 번 돈다.
+	 */
+	void AdvanceFrame(UWorld* World, double DeltaSeconds)
+	{
+		++GFrameCounter;
+		World->GetTimerManager().Tick(0.0f);
+
+		++GFrameCounter;
+		World->TimeSeconds += DeltaSeconds;
+		World->UnpausedTimeSeconds += DeltaSeconds;
+		World->DeltaTimeSeconds = static_cast<float>(DeltaSeconds);
+		World->GetTimerManager().Tick(static_cast<float>(DeltaSeconds));
+	}
+
+	void AdvanceFrames(UWorld* World, double DeltaSeconds, int32 FrameCount)
+	{
+		for (int32 Index = 0; Index < FrameCount; ++Index)
+		{
+			AdvanceFrame(World, DeltaSeconds);
+		}
+	}
+
+	/** Fire Action 무기를 든 사수 한 명이다. 로컬 발사 신호를 센다. */
+	struct FFireRig
+	{
+		UWorld* World = nullptr;
+		APDPlayerCharacter* Holder = nullptr;
+		APDWorldItemActor* Weapon = nullptr;
+		UPDHeldItemComponent* HeldItems = nullptr;
+		UPDWeaponMagazineComponent* Magazine = nullptr;
+		int32 ShotCount = 0;
+		FDelegateHandle ShotHandle;
+
+		bool SetUp(TFunctionRef<UPDItemDefinition*(UObject*)> MakeDefinition)
+		{
+			FWorldContext* WorldContext = nullptr;
+			World = CreateTestWorld(WorldContext);
+			if (!World)
+			{
+				return false;
+			}
+
+			Holder = World->SpawnActor<APDPlayerCharacter>();
+			Weapon = World->SpawnActor<APDWorldItemActor>();
+			if (!Holder || !Weapon)
+			{
+				return false;
+			}
+
+			Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
+			if (!ConfigureHolderSocket(Holder) ||
+				!Weapon->InitializeItem(MakeDefinition(Weapon)))
+			{
+				return false;
+			}
+
+			Weapon->DispatchBeginPlay();
+			HeldItems = Holder->GetHeldItemComponent();
+			if (!HeldItems->TryPickUp(Weapon))
+			{
+				return false;
+			}
+
+			Magazine = Weapon->GetMagazineComponent();
+			ShotHandle = HeldItems->OnLocalShotFired.AddLambda(
+				[this](APDWorldItemActor*) { ++ShotCount; });
+			return Magazine != nullptr;
+		}
+
+		void TearDown()
+		{
+			if (HeldItems)
+			{
+				HeldItems->OnLocalShotFired.Remove(ShotHandle);
+			}
+			DestroyTestWorld(World);
+			World = nullptr;
+		}
+
+		FGameplayAbilitySpecHandle GetAbilityHandle() const
+		{
+			return Weapon->GetAbilitySourceComponent()->GetGrantedAbilityHandle();
+		}
+
+		UPDGA_FireAction* FindFireAction() const
+		{
+			const FGameplayAbilitySpec* Spec =
+				Holder->GetPDAbilitySystemComponent()->FindAbilitySpecFromHandle(
+					GetAbilityHandle());
+			return Spec ? Cast<UPDGA_FireAction>(Spec->GetPrimaryInstance()) : nullptr;
+		}
+
+		/** 서버가 받을 발 묶음이다. 대상이 있으면 발마다 그 대상에 맞힌다. */
+		FPDFireShotBatchStruct MakeBatch(
+			int32 FirstShotIndex,
+			int32 BatchShotCount,
+			AActor* HitTarget) const
+		{
+			FPDFireShotBatchStruct Batch;
+			Batch.AbilityHandle = GetAbilityHandle();
+			Batch.SourceObject = Weapon->GetAbilitySourceComponent();
+			for (int32 Offset = 0; Offset < BatchShotCount; ++Offset)
+			{
+				FPDFireShotStruct& Shot = Batch.Shots.AddDefaulted_GetRef();
+				Shot.ShotIndex = FirstShotIndex + Offset;
+				if (HitTarget)
+				{
+					const FHitResult Hit(
+						HitTarget,
+						nullptr,
+						HitTarget->GetActorLocation(),
+						FVector::BackwardVector);
+					Shot.Hits.Add(FPDFireShotHitStruct::Make(HitTarget, &Hit));
+				}
+			}
+			return Batch;
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionScheduleTest,
+	"PADO.Item.Weapon.FireAction.Schedule",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionScheduleTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+
+	struct FFrameCase
+	{
+		const TCHAR* Name;
+		TArray<double> FramePattern;
+	};
+	const FFrameCase FrameCases[] = {
+		{ TEXT("60fps"), { Frame60 } },
+		{ TEXT("30fps"), { 1.0 / 30.0 } },
+		{ TEXT("144fps"), { 1.0 / 144.0 } },
+		{ TEXT("불규칙 프레임"), { 0.005, 0.03, 0.012, 0.041 } }
+	};
+
+	// 발 간격 0.1초 자동이면 0.95초 동안 0, 0.1, ..., 0.9초에 쏜다. 프레임 길이와
+	// 무관하게 10발이어야 한다. 한 프레임이 발 간격보다 짧은 경우만 다룬다.
+	for (const FFrameCase& FrameCase : FrameCases)
+	{
+		FFireRig Rig;
+		if (!TestTrue(
+			FString::Printf(TEXT("%s: 자동 무기를 든다."), FrameCase.Name),
+			Rig.SetUp([](UObject* Outer)
+			{
+				return MakeFireItemDefinition(Outer, 100, EPDFireMode::Automatic, 0.1f);
+			})))
+		{
+			Rig.TearDown();
+			continue;
+		}
+
+		UPDGA_FireAction* FireAction = Rig.FindFireAction();
+		TestTrue(
+			FString::Printf(TEXT("%s: 무기를 들면 Fire Action이 활성화된다."), FrameCase.Name),
+			FireAction && FireAction->IsActive());
+
+		TestTrue(TEXT("방아쇠를 당긴다."), Rig.HeldItems->PressHeldItemUse());
+		TestEqual(
+			FString::Printf(TEXT("%s: 누르는 즉시 첫 발이 나간다."), FrameCase.Name),
+			Rig.ShotCount,
+			1);
+
+		double Elapsed = 0.0;
+		int32 FrameIndex = 0;
+		constexpr double Duration = 0.95;
+		while (Elapsed < Duration - UE_KINDA_SMALL_NUMBER)
+		{
+			const double Delta = FMath::Min(
+				FrameCase.FramePattern[FrameIndex++ % FrameCase.FramePattern.Num()],
+				Duration - Elapsed);
+			AdvanceFrame(Rig.World, Delta);
+			Elapsed += Delta;
+		}
+
+		TestEqual(
+			FString::Printf(TEXT("%s: 0.95초 동안 10발이다."), FrameCase.Name),
+			Rig.ShotCount,
+			10);
+		TestEqual(
+			FString::Printf(TEXT("%s: 쏜 만큼 탄약을 쓴다."), FrameCase.Name),
+			Rig.Magazine->GetCurrentMagazineAmmo(),
+			90);
+
+		Rig.HeldItems->ReleaseHeldItemUse();
+		AdvanceFrames(Rig.World, Frame60, 30);
+		TestEqual(
+			FString::Printf(TEXT("%s: 떼면 멈춘다."), FrameCase.Name),
+			Rig.ShotCount,
+			10);
+		Rig.TearDown();
+	}
+
+	// 발 간격이 프레임보다 짧으면 한 프레임에 여러 발이 나간다. 그래도 연사력은
+	// 발 간격대로다. 0.02초 간격을 30fps로 0.9667초 돌리면 0, 0.02, ..., 0.96초의
+	// 49발이다.
+	FFireRig FastRig;
+	if (TestTrue(
+		TEXT("발 간격이 프레임보다 짧은 무기를 든다."),
+		FastRig.SetUp([](UObject* Outer)
+		{
+			return MakeFireItemDefinition(Outer, 100, EPDFireMode::Automatic, 0.02f);
+		})))
+	{
+		FastRig.HeldItems->PressHeldItemUse();
+		AdvanceFrames(FastRig.World, 1.0 / 30.0, 2);
+		TestEqual(TEXT("두 번째 프레임에는 두 발이 함께 나간다."), FastRig.ShotCount, 4);
+		AdvanceFrames(FastRig.World, 1.0 / 30.0, 27);
+		TestEqual(TEXT("프레임보다 짧은 간격도 연사력이 줄지 않는다."), FastRig.ShotCount, 49);
+		FastRig.HeldItems->ReleaseHeldItemUse();
+	}
+	FastRig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionTriggerModesTest,
+	"PADO.Item.Weapon.FireAction.TriggerModes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionTriggerModesTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+
+	FFireRig SemiRig;
+	if (TestTrue(
+		TEXT("반자동 무기를 든다."),
+		SemiRig.SetUp([](UObject* Outer)
+		{
+			return MakeFireItemDefinition(Outer, 30, EPDFireMode::SemiAutomatic, 0.25f);
+		})))
+	{
+		UPDHeldItemComponent* HeldItems = SemiRig.HeldItems;
+		HeldItems->PressHeldItemUse();
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("반자동은 누를 때 한 발이다."), SemiRig.ShotCount, 1);
+
+		AdvanceFrames(SemiRig.World, Frame60, 6);
+		HeldItems->PressHeldItemUse();
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("준비 전에 누른 입력은 버린다."), SemiRig.ShotCount, 1);
+
+		AdvanceFrames(SemiRig.World, Frame60, 12);
+		HeldItems->PressHeldItemUse();
+		TestEqual(TEXT("준비된 뒤 누르면 바로 나간다."), SemiRig.ShotCount, 2);
+		AdvanceFrames(SemiRig.World, Frame60, 60);
+		TestEqual(TEXT("반자동은 누르고 있어도 더 쏘지 않는다."), SemiRig.ShotCount, 2);
+		HeldItems->ReleaseHeldItemUse();
+	}
+	SemiRig.TearDown();
+
+	FFireRig BurstRig;
+	if (TestTrue(
+		TEXT("점사 무기를 든다."),
+		BurstRig.SetUp([](UObject* Outer)
+		{
+			UPDItemDefinition* Definition =
+				MakeFireItemDefinition(Outer, 30, EPDFireMode::Burst, 0.05f);
+			UPDFireActionDefinition* Action =
+				CastChecked<UPDFireActionDefinition>(Definition->UseAction);
+			Action->BurstCount = 3;
+			Action->BurstCooldown = 0.3f;
+			return Definition;
+		})))
+	{
+		UPDHeldItemComponent* HeldItems = BurstRig.HeldItems;
+		HeldItems->PressHeldItemUse();
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("점사는 누르는 즉시 첫 발이 나간다."), BurstRig.ShotCount, 1);
+
+		// 0.05, 0.1초에 나머지 두 발이 나간다. 중간에 떼도 끝까지 쏜다.
+		AdvanceFrames(BurstRig.World, Frame60, 12);
+		TestEqual(TEXT("점사는 떼도 정해진 발 수를 모두 쏜다."), BurstRig.ShotCount, 3);
+
+		// 마지막 발(0.1초) 뒤 0.3초가 지나야 다음 점사다.
+		HeldItems->PressHeldItemUse();
+		HeldItems->ReleaseHeldItemUse();
+		TestEqual(TEXT("점사 대기 중에 누른 입력은 버린다."), BurstRig.ShotCount, 3);
+
+		AdvanceFrames(BurstRig.World, Frame60, 15);
+		HeldItems->PressHeldItemUse();
+		AdvanceFrames(BurstRig.World, Frame60, 12);
+		TestEqual(TEXT("대기가 끝나면 다음 점사를 쏜다."), BurstRig.ShotCount, 6);
+		AdvanceFrames(BurstRig.World, Frame60, 60);
+		TestEqual(TEXT("점사는 누르고 있어도 한 번뿐이다."), BurstRig.ShotCount, 6);
+		HeldItems->ReleaseHeldItemUse();
+	}
+	BurstRig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionShotGateTest,
+	"PADO.Item.Weapon.FireAction.ShotGate",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionShotGateTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+
+	FFireRig Rig;
+	if (TestTrue(
+		TEXT("3발 자동 무기를 든다."),
+		Rig.SetUp([](UObject* Outer)
+		{
+			return MakeFireItemDefinition(Outer, 3, EPDFireMode::Automatic, 0.1f);
+		})))
+	{
+		UPDHeldItemComponent* HeldItems = Rig.HeldItems;
+		UPDAbilitySystemComponent* AbilitySystem =
+			Rig.Holder->GetPDAbilitySystemComponent();
+
+		HeldItems->PressHeldItemUse();
+		AdvanceFrames(Rig.World, Frame60, 60);
+		TestEqual(TEXT("탄약만큼만 쏜다."), Rig.ShotCount, 3);
+		TestEqual(TEXT("탄창이 비었다."), Rig.Magazine->GetCurrentMagazineAmmo(), 0);
+
+		// 탄약 소진은 방아쇠 입력을 끝낸다. 재장전 뒤 누르고 있던 채로 이어 쏘지 않는다.
+		// 서버의 재장전이다. 인터페이스 경로(Execute_TryStartReload)는 Actor가
+		// 초기화되지 않은 테스트 World에서 ProcessEvent가 건너뛰므로 직접 부른다.
+		TestTrue(TEXT("재장전한다."), Rig.Magazine->TryStartReload());
+		TestEqual(TEXT("재장전으로 탄창이 찬다."), Rig.Magazine->GetCurrentMagazineAmmo(), 3);
+		AdvanceFrames(Rig.World, Frame60, 30);
+		TestEqual(TEXT("재장전 뒤에는 다시 눌러야 쏜다."), Rig.ShotCount, 3);
+
+		HeldItems->ReleaseHeldItemUse();
+		HeldItems->PressHeldItemUse();
+		TestEqual(TEXT("다시 누르면 쏜다."), Rig.ShotCount, 4);
+
+		// Block은 발사만 멈추고 방아쇠 상태는 유지한다. 풀리면 이어 쏜다.
+		const FGameplayTagContainer ActionTags(TAG_PD_Ability_Action);
+		AbilitySystem->BlockAbilitiesWithTags(ActionTags);
+		AdvanceFrames(Rig.World, Frame60, 30);
+		TestEqual(TEXT("막힌 동안에는 쏘지 않는다."), Rig.ShotCount, 4);
+		TestEqual(TEXT("막힌 동안에는 탄약이 줄지 않는다."),
+			Rig.Magazine->GetCurrentMagazineAmmo(), 2);
+
+		AbilitySystem->UnBlockAbilitiesWithTags(ActionTags);
+		AdvanceFrames(Rig.World, Frame60, 20);
+		TestEqual(TEXT("풀리면 누르고 있던 사격이 이어진다."), Rig.ShotCount, 6);
+		TestEqual(TEXT("이어 쏜 만큼 탄약을 쓴다."),
+			Rig.Magazine->GetCurrentMagazineAmmo(), 0);
+		HeldItems->ReleaseHeldItemUse();
+	}
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionServerProcessingTest,
+	"PADO.Item.Weapon.FireAction.ServerProcessing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionServerProcessingTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+
+	// 맞은 횟수를 대상의 태그 수로 센다. 지속 GE 하나가 태그 하나를 붙인다.
+	const FGameplayTag HitMarkTag =
+		FGameplayTag::RequestGameplayTag(TEXT("Cooldown.Weapon.Fire"));
+
+	FFireRig Rig;
+	if (!TestTrue(
+		TEXT("대상에게 결과를 주는 무기를 든다."),
+		Rig.SetUp([HitMarkTag](UObject* Outer)
+		{
+			UPDItemDefinition* Definition =
+				MakeFireItemDefinition(Outer, 30, EPDFireMode::Automatic, 0.1f);
+			UPDAbilityDefinition* Action = Definition->UseAction;
+			UPDApplyGameplayEffectFragment* Mark =
+				NewObject<UPDApplyGameplayEffectFragment>(Action);
+			Mark->EffectRecipe.EffectClass = UPDGE_ActionCooldown::StaticClass();
+			Mark->EffectRecipe.DynamicGrantedTags.AddTag(HitMarkTag);
+			FPDSetByCallerValueStruct& Duration =
+				Mark->EffectRecipe.SetByCallers.AddDefaulted_GetRef();
+			Duration.DataTag = TAG_PD_Data_Cooldown_Duration;
+			Duration.Magnitude = 60.0f;
+
+			FPDActionHookStruct ExecuteHook;
+			ExecuteHook.HookTag = TAG_PD_ActionHook_OnExecute;
+			ExecuteHook.Fragments.Add(Mark);
+			Action->ActionHooks.Add(MoveTemp(ExecuteHook));
+			return Definition;
+		})))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APDPlayerCharacter* Target = Rig.World->SpawnActor<APDPlayerCharacter>(
+		FVector(300.0f, 0.0f, 0.0f),
+		FRotator::ZeroRotator);
+	UPDGA_FireAction* FireAction = Rig.FindFireAction();
+	if (TestNotNull(TEXT("대상을 스폰한다."), Target) &&
+		TestNotNull(TEXT("활성 Fire Action을 찾는다."), FireAction))
+	{
+		UPDAbilitySystemComponent* TargetAbilitySystem =
+			Target->GetPDAbilitySystemComponent();
+		TargetAbilitySystem->InitAbilityActorInfo(Target, Target);
+		UPDWeaponMagazineComponent* Magazine = Rig.Magazine;
+
+		// 받은 판정을 다시 추적하지 않고 그대로 적용한다. 대상은 사수 뒤에 있지만
+		// 기록이 맞았다고 하면 맞은 것이다.
+		FireAction->ProcessShotBatch(Rig.MakeBatch(1, 2, Target));
+		TestEqual(TEXT("발마다 탄약을 쓴다."), Magazine->GetCurrentMagazineAmmo(), 28);
+		TestEqual(TEXT("기록된 명중을 발마다 적용한다."),
+			TargetAbilitySystem->GetTagCount(HitMarkTag), 2);
+
+		FPDFireShotBatchStruct OtherWeapon = Rig.MakeBatch(3, 1, Target);
+		OtherWeapon.SourceObject = Target;
+		FireAction->ProcessShotBatch(OtherWeapon);
+		FPDFireShotBatchStruct OtherSpec = Rig.MakeBatch(3, 1, Target);
+		OtherSpec.AbilityHandle = FGameplayAbilitySpecHandle();
+		FireAction->ProcessShotBatch(OtherSpec);
+		TestEqual(TEXT("다른 무기나 다른 Spec의 묶음은 버린다."),
+			Magazine->GetCurrentMagazineAmmo(), 28);
+
+		// 핑이 한계를 넘으면 쏜 것은 인정하고 명중만 인정하지 않는다.
+		APlayerState* ShooterState = Rig.World->SpawnActor<APlayerState>();
+		if (TestNotNull(TEXT("사수의 PlayerState를 스폰한다."), ShooterState))
+		{
+			Rig.Holder->SetPlayerState(ShooterState);
+			ShooterState->ExactPing = FireAction->MaxAcceptedPingMilliseconds + 50.0f;
+			FireAction->ProcessShotBatch(Rig.MakeBatch(3, 1, Target));
+			TestEqual(TEXT("지연 한계를 넘어도 탄약은 쓴다."),
+				Magazine->GetCurrentMagazineAmmo(), 27);
+			TestEqual(TEXT("지연 한계를 넘으면 명중을 인정하지 않는다."),
+				TargetAbilitySystem->GetTagCount(HitMarkTag), 2);
+
+			ShooterState->ExactPing = FireAction->MaxAcceptedPingMilliseconds - 50.0f;
+			FireAction->ProcessShotBatch(Rig.MakeBatch(4, 1, Target));
+			TestEqual(TEXT("한계 안이면 명중을 인정한다."),
+				TargetAbilitySystem->GetTagCount(HitMarkTag), 3);
+			Rig.Holder->SetPlayerState(nullptr);
+		}
+
+		// 서버만 아는 무력화는 서버가 우선이다. 막힌 동안 도착한 발은 없었던 것이다.
+		UPDAbilitySystemComponent* ShooterAbilitySystem =
+			Rig.Holder->GetPDAbilitySystemComponent();
+		const FGameplayTagContainer ActionTags(TAG_PD_Ability_Action);
+		ShooterAbilitySystem->BlockAbilitiesWithTags(ActionTags);
+		FireAction->ProcessShotBatch(Rig.MakeBatch(5, 1, Target));
+		TestEqual(TEXT("서버에서 막힌 발은 탄약을 쓰지 않는다."),
+			Magazine->GetCurrentMagazineAmmo(), 26);
+		TestEqual(TEXT("서버에서 막힌 발은 명중을 적용하지 않는다."),
+			TargetAbilitySystem->GetTagCount(HitMarkTag), 3);
+		ShooterAbilitySystem->UnBlockAbilitiesWithTags(ActionTags);
+
+		// 탄약보다 많은 발이 오면 남은 탄약까지만 결과를 준다. 넘친 4발은 탄약
+		// 소비가 실패했다는 경고를 남긴다.
+		AddExpectedMessagePlain(
+			TEXT("탄창이 비어 있습니다."),
+			ELogVerbosity::Warning,
+			EAutomationExpectedMessageFlags::Contains,
+			4);
+		FireAction->ProcessShotBatch(Rig.MakeBatch(6, 30, Target));
+		TestEqual(TEXT("탄창을 넘는 발은 무효다."), Magazine->GetCurrentMagazineAmmo(), 0);
+		TestEqual(TEXT("무효인 발은 명중을 적용하지 않는다."),
+			TargetAbilitySystem->GetTagCount(HitMarkTag), 29);
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionAmmoPredictionTest,
+	"PADO.Item.Weapon.FireAction.AmmoPrediction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionAmmoPredictionTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("탄약 예측 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("무기를 스폰한다."), Weapon) &&
+		TestTrue(TEXT("30발 무기를 초기화한다."), Weapon->InitializeItem(
+			MakeFireItemDefinition(Weapon, 30, EPDFireMode::Automatic, 0.1f))))
+	{
+		UPDWeaponMagazineComponent* Magazine = Weapon->GetMagazineComponent();
+
+		// 같은 컴포넌트를 역할만 바꿔 서버와 소유 클라이언트 양쪽에서 본다.
+		// 복제로 도착하는 값(탄약, 처리 기록)은 서버 역할일 때 바꾼다.
+		auto AsServer = [Weapon]() { Weapon->SetRole(ROLE_Authority); };
+		auto AsOwner = [Weapon]() { Weapon->SetRole(ROLE_AutonomousProxy); };
+		// Spec을 만들면 새 Handle이 발급된다. 줍기마다 다른 Spec이 생기는 것과 같다.
+		auto MakeSpecHandle = []()
+		{
+			return FGameplayAbilitySpec(UPDGA_FireAction::StaticClass()).Handle;
+		};
+		const FGameplayAbilitySpecHandle FirstSpec = MakeSpecHandle();
+		const FGameplayAbilitySpecHandle OtherOwnerSpec = MakeSpecHandle();
+		const FGameplayAbilitySpecHandle NextSpec = MakeSpecHandle();
+
+		AsOwner();
+		Magazine->BeginLocalShotSession(FirstSpec, 0);
+		for (int32 ShotIndex = 1; ShotIndex <= 3; ++ShotIndex)
+		{
+			Magazine->RecordLocalShot(FirstSpec, ShotIndex);
+		}
+		TestEqual(TEXT("서버가 처리하기 전의 발만큼 빼고 본다."),
+			Magazine->GetCurrentMagazineAmmo(), 27);
+
+		AsServer();
+		TestTrue(TEXT("서버가 첫 발을 처리한다."), Magazine->TryConsumeRound());
+		TestTrue(TEXT("서버가 둘째 발을 처리한다."), Magazine->TryConsumeRound());
+		Magazine->RecordProcessedShot(FirstSpec, 2);
+		TestEqual(TEXT("서버는 실제 탄약을 본다."), Magazine->GetCurrentMagazineAmmo(), 28);
+		AsOwner();
+		TestEqual(TEXT("처리된 발은 서버 탄약에 이미 들어 있다."),
+			Magazine->GetCurrentMagazineAmmo(), 27);
+
+		// 서버가 무효로 한 발도 처리한 발이다. 탄약이 줄지 않았으므로 서버 값에 맞춰진다.
+		AsServer();
+		Magazine->RecordProcessedShot(FirstSpec, 3);
+		AsOwner();
+		TestEqual(TEXT("무효가 된 발은 서버 값으로 수렴한다."),
+			Magazine->GetCurrentMagazineAmmo(), 28);
+		TestEqual(TEXT("미처리 발이 남지 않는다."), Magazine->GetUnprocessedLocalShotCount(), 0);
+
+		// 재장전을 요청하면 서버의 답이 올 때까지 쏘지 않는다.
+		TestTrue(TEXT("탄창이 차 있지 않으면 재장전을 요청할 수 있다."),
+			Magazine->CanRequestReload());
+		Magazine->MarkReloadRequested();
+		TestFalse(TEXT("요청한 뒤에는 쏘지 않는다."),
+			Magazine->CanConsumeRoundWithReplicatedState());
+		TestFalse(TEXT("요청을 겹쳐 보내지 않는다."), Magazine->CanRequestReload());
+		Magazine->ClearReloadRequest();
+		TestTrue(TEXT("답이 오면 다시 쏜다."), Magazine->CanConsumeRoundWithReplicatedState());
+
+		Magazine->EndLocalShotSession(FirstSpec);
+		TestEqual(TEXT("무기를 놓으면 복제된 탄약을 그대로 본다."),
+			Magazine->GetCurrentMagazineAmmo(), 28);
+
+		// 다른 줍기(다른 Spec)의 처리 기록은 이번 발과 섞이지 않는다.
+		AsServer();
+		Magazine->RecordProcessedShot(OtherOwnerSpec, 57);
+		AsOwner();
+		Magazine->BeginLocalShotSession(NextSpec, 0);
+		Magazine->RecordLocalShot(NextSpec, 1);
+		TestEqual(TEXT("다른 Spec의 처리 기록은 이번 발을 처리한 것으로 보지 않는다."),
+			Magazine->GetCurrentMagazineAmmo(), 27);
+
+		Magazine->RecordLocalShot(NextSpec, 28);
+		TestEqual(TEXT("예측 탄약이 바닥나면 0이다."), Magazine->GetCurrentMagazineAmmo(), 0);
+		TestFalse(TEXT("예측 탄약이 없으면 쏘지 않는다."),
+			Magazine->CanConsumeRoundWithReplicatedState());
+		Magazine->EndLocalShotSession(NextSpec);
+
+		AsServer();
+		Magazine->RecordLocalShot(NextSpec, 5);
+		TestEqual(TEXT("서버는 로컬 발을 빼지 않는다."), Magazine->GetCurrentMagazineAmmo(), 28);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionExecutionScopeTest,
+	"PADO.GAS.Fragment.ExecutionScope",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionExecutionScopeTest::RunTest(const FString& Parameters)
+{
+	UPDExecuteGameplayCueFragment* Cue =
+		NewObject<UPDExecuteGameplayCueFragment>(GetTransientPackage());
+	UPDConsumeMagazineAmmoFragment* Ammo =
+		NewObject<UPDConsumeMagazineAmmoFragment>(GetTransientPackage());
+
+	FPDActionExecutionContext Context;
+	Context.ExecutionScope = EPDActionExecutionScope::PresentationOnly;
+	TestTrue(TEXT("연출 전용 실행은 Cue를 돌린다."), Context.AllowsFragment(*Cue));
+	TestFalse(TEXT("연출 전용 실행은 탄약을 쓰지 않는다."), Context.AllowsFragment(*Ammo));
+	TestTrue(TEXT("연출 전용 실행은 권한 없이도 재생한다."), Context.CanPlayPresentation());
+
+	Context.ExecutionScope = EPDActionExecutionScope::ResultsOnly;
+	TestFalse(TEXT("결과 전용 실행은 Cue를 돌리지 않는다."), Context.AllowsFragment(*Cue));
+	TestTrue(TEXT("결과 전용 실행은 탄약을 쓴다."), Context.AllowsFragment(*Ammo));
+
+	Context.ExecutionScope = EPDActionExecutionScope::Predicting;
+	TestFalse(TEXT("예측을 켜지 않은 Cue는 예측 실행에서 돌리지 않는다."),
+		Context.AllowsFragment(*Cue));
+	Cue->bPredictOnOwningClient = true;
+	TestTrue(TEXT("예측을 켠 Cue는 예측 실행에서 돌린다."), Context.AllowsFragment(*Cue));
+	TestFalse(TEXT("예측 실행은 탄약을 쓰지 않는다."), Context.AllowsFragment(*Ammo));
+
+	Context.ExecutionScope = EPDActionExecutionScope::Authority;
+	TestTrue(TEXT("서버 실행은 Cue를 돌린다."), Context.AllowsFragment(*Cue));
+	TestTrue(TEXT("서버 실행은 탄약을 쓴다."), Context.AllowsFragment(*Ammo));
+	TestFalse(TEXT("권한이 없으면 서버 실행 문맥으로 재생하지 않는다."),
+		Context.CanPlayPresentation());
+
+	// 첫 발과 그 뒤 N발마다다. 발 번호가 없는 실행은 매번이다.
+	Cue->PlayEveryNthShot = 3;
+	TestTrue(TEXT("첫 발에 재생한다."), Cue->ShouldPlayForShot(1));
+	TestFalse(TEXT("둘째 발은 건너뛴다."), Cue->ShouldPlayForShot(2));
+	TestFalse(TEXT("셋째 발은 건너뛴다."), Cue->ShouldPlayForShot(3));
+	TestTrue(TEXT("넷째 발에 재생한다."), Cue->ShouldPlayForShot(4));
+	TestTrue(TEXT("발 번호가 없으면 재생한다."), Cue->ShouldPlayForShot(INDEX_NONE));
+	Cue->PlayEveryNthShot = 1;
+	TestTrue(TEXT("1이면 매 발이다."), Cue->ShouldPlayForShot(2));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDFireActionLifecycleTest,
+	"PADO.Item.Weapon.FireAction.Lifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDFireActionLifecycleTest::RunTest(const FString& Parameters)
+{
+	using namespace PDFireActionTests;
+
+	FFireRig Rig;
+	if (TestTrue(
+		TEXT("자동 무기를 든다."),
+		Rig.SetUp([](UObject* Outer)
+		{
+			return MakeFireItemDefinition(Outer, 30, EPDFireMode::Automatic, 0.1f);
+		})))
+	{
+		UPDAbilitySystemComponent* AbilitySystem =
+			Rig.Holder->GetPDAbilitySystemComponent();
+		UPDGA_FireAction* FireAction = Rig.FindFireAction();
+		TestTrue(TEXT("무기를 들면 활성화된다."), FireAction && FireAction->IsActive());
+
+		// 다른 Ability의 Cancel로 끝나면 다시 들기 전까지 쏠 수 없다.
+		AbilitySystem->CancelAbilityHandle(Rig.GetAbilityHandle());
+		TestTrue(TEXT("Cancel로는 끝나지 않는다."), FireAction && FireAction->IsActive());
+
+		TestTrue(TEXT("무기를 놓는다."),
+			Rig.HeldItems->DropHeldItem(FTransform::Identity));
+		TestFalse(TEXT("무기를 놓으면 끝난다."), FireAction && FireAction->IsActive());
+
+		// 막힌 상태로 들어도 활성화는 된다. 막힘은 발마다 본다.
+		const FGameplayTagContainer ActionTags(TAG_PD_Ability_Action);
+		AbilitySystem->BlockAbilitiesWithTags(ActionTags);
+		TestTrue(TEXT("막힌 상태에서 무기를 다시 든다."), Rig.HeldItems->TryPickUp(Rig.Weapon));
+		UPDGA_FireAction* ReequippedAction = Rig.FindFireAction();
+		TestTrue(TEXT("막힌 상태로 들어도 활성화된다."),
+			ReequippedAction && ReequippedAction->IsActive());
+
+		Rig.HeldItems->PressHeldItemUse();
+		TestEqual(TEXT("막힌 동안에는 쏘지 않는다."), Rig.ShotCount, 0);
+		AbilitySystem->UnBlockAbilitiesWithTags(ActionTags);
+		AdvanceFrames(Rig.World, Frame60, 10);
+		TestTrue(TEXT("풀리면 누르고 있던 사격이 시작된다."), Rig.ShotCount > 0);
+		Rig.HeldItems->ReleaseHeldItemUse();
+	}
+	Rig.TearDown();
 	return true;
 }
 

@@ -21,6 +21,11 @@ bool UPDActionFragment::SupportsLocalPrediction() const
 	return false;
 }
 
+bool UPDActionFragment::IsPresentationOnly() const
+{
+	return false;
+}
+
 bool UPDActionFragment::RequiresShotResult() const
 {
 	return false;

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "GameplayAbilitySpecHandle.h"
 #include "PDWeaponMagazineComponent.generated.h"
 
 class UAnimInstance;
@@ -23,6 +24,22 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	float,
 	ReloadEndServerTime);
 
+/**
+ * Fire Action의 발 하나를 가리킨다. 발 번호는 Ability Spec마다 따로 세므로 Spec과
+ * 함께 있어야 다른 줍기(다른 Spec)의 발과 섞이지 않는다.
+ */
+USTRUCT()
+struct PADO_API FPDMagazineShotMarkStruct
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FGameplayAbilitySpecHandle AbilityHandle;
+
+	UPROPERTY()
+	int32 ShotIndex = 0;
+};
+
 /** 탄창 기능이 활성화된 Item Actor의 서버 권한 런타임 상태다. */
 UCLASS(BlueprintType, ClassGroup = (PD), meta = (BlueprintSpawnableComponent))
 class PADO_API UPDWeaponMagazineComponent : public UActorComponent
@@ -39,10 +56,50 @@ public:
 	 * 복제된 상태만으로 판정한다. 서버와 소유 클라이언트가 같은 함수를 본다.
 	 *
 	 * 예측에는 클라이언트도 같은 판정이 필요하다. 조건을 따로 적으면 반드시
-	 * 어긋나므로 판정은 여기 한 곳에만 둔다.
+	 * 어긋나므로 판정은 여기 한 곳에만 둔다. 소유 클라이언트는 예측 탄약과
+	 * 보내 둔 재장전 요청까지 본다.
 	 */
 	UFUNCTION(BlueprintPure, Category = "PD|Item|Weapon")
 	bool CanConsumeRoundWithReplicatedState() const;
+
+	/**
+	 * 소유 클라이언트가 Fire Action을 시작했다. 이 Spec의 발 번호를 이어서 센다.
+	 * 이전 줍기에서 남은 기록이 새 발의 예측을 흐리지 않게 한다.
+	 */
+	void BeginLocalShotSession(
+		FGameplayAbilitySpecHandle AbilityHandle,
+		int32 LastShotIndex);
+
+	/** 무기를 놓았다. 서버가 버린 발까지 모두 잊고 복제된 탄약을 그대로 본다. */
+	void EndLocalShotSession(FGameplayAbilitySpecHandle AbilityHandle);
+
+	/**
+	 * 소유 클라이언트가 방금 쏜 발이다. 서버가 처리할 때까지 그만큼 탄약을 빼고
+	 * 보여 주고 판정한다.
+	 */
+	void RecordLocalShot(FGameplayAbilitySpecHandle AbilityHandle, int32 ShotIndex);
+
+	/**
+	 * 서버가 발 기록 하나를 처리했다. 탄약을 썼는지와 무관하게 기록한다. 탄약과
+	 * 같은 갱신으로 소유자에게 복제된다.
+	 */
+	void RecordProcessedShot(FGameplayAbilitySpecHandle AbilityHandle, int32 ShotIndex);
+
+	/** 쏘고 서버가 아직 처리하지 않은 자기 발 수다. 서버에서는 언제나 0이다. */
+	int32 GetUnprocessedLocalShotCount() const;
+
+	/** 재장전을 요청할 수 있는가. 예측 탄약이 가득 차 있거나 이미 요청했으면 아니다. */
+	bool CanRequestReload() const;
+
+	/**
+	 * 재장전을 요청했다. 서버의 재장전 상태가 오거나 거부될 때까지 발사를 막는다.
+	 * 쏘던 중이어도 이 순간 스스로 멈춘다.
+	 */
+	void MarkReloadRequested();
+
+	void ClearReloadRequest();
+
+	bool IsReloadRequested() const { return bReloadRequested; }
 
 	bool CanConsumeRound(FString& OutError) const;
 
@@ -61,8 +118,12 @@ public:
 	 */
 	bool NotifyReloadComplete();
 
+	/**
+	 * 이 머신이 보는 현재 탄약이다. 소유 클라이언트는 서버가 아직 처리하지 않은
+	 * 자기 발만큼 뺀 예측 값을 본다. 서버에서는 실제 탄약이다.
+	 */
 	UFUNCTION(BlueprintPure, Category = "PD|Item|Weapon")
-	int32 GetCurrentMagazineAmmo() const { return CurrentMagazineAmmo; }
+	int32 GetCurrentMagazineAmmo() const;
 
 	UFUNCTION(BlueprintPure, Category = "PD|Item|Weapon")
 	int32 GetMagazineCapacity() const;
@@ -93,6 +154,9 @@ protected:
 	UFUNCTION()
 	void OnRep_ReloadState();
 
+	UFUNCTION()
+	void OnRep_ProcessedShot();
+
 	/** 몽타주가 끝나거나 끊겼을 때 재장전 상태를 정리한다. */
 	void OnReloadMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
@@ -107,6 +171,10 @@ private:
 	void StopReloadMontage();
 
 	void CompleteReload();
+
+	/** 탄창이 찼으면 보내 둔 재장전 요청을 푼다. 몽타주 없는 재장전의 답이다. */
+	void ResolveReloadRequest();
+
 	void BroadcastMagazineChanged();
 	void BroadcastReloadStateChanged();
 	void ForceOwnerNetUpdate() const;
@@ -127,6 +195,19 @@ private:
 	 */
 	UPROPERTY(ReplicatedUsing = OnRep_ReloadState)
 	uint8 ReloadCancelCounter = 0;
+
+	/**
+	 * 서버가 마지막으로 처리한 발이다. 탄약과 같은 객체의 속성이라 같은 갱신으로
+	 * 소유자에게 함께 도착한다. 소유 클라이언트는 이것으로 미처리 발을 센다.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_ProcessedShot)
+	FPDMagazineShotMarkStruct ProcessedShot;
+
+	/** 이 머신이 마지막으로 쏜 발이다. 소유 클라이언트에서만 쓰며 복제하지 않는다. */
+	FPDMagazineShotMarkStruct LocalShot;
+
+	/** 재장전을 요청하고 서버의 답을 기다리는 중인가. 복제하지 않는다. */
+	bool bReloadRequested = false;
 
 	bool bMagazineInitialized = false;
 	TWeakObjectPtr<const UPDItemDefinition> InitializedDefinition;
