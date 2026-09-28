@@ -10,13 +10,24 @@ public class PADO : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
-			"Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
+			"Core",
+			"CoreUObject",
+			"Engine",
+			"InputCore",
+			"EnhancedInput",
 
+
+			// GameplayTag
+			"GameplayAbilities",
+			"GameplayTags",
+			"GameplayTasks"
+			
 			// GMS(Gameplay Message Router)
-			"GameplayTags", "GameplayMessageRuntime"
+			"GameplayMessageRuntime"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "PhysicsCore" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
