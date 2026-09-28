@@ -15,9 +15,15 @@ public class PADO : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
+
+
+			// GameplayTag
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks"
+			
+			// GMS(Gameplay Message Router)
+			"GameplayMessageRuntime"
 		});
 
 		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
