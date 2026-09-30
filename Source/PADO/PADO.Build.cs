@@ -20,7 +20,7 @@ public class PADO : ModuleRules
 			// GameplayTag
 			"GameplayAbilities",
 			"GameplayTags",
-			"GameplayTasks"
+			"GameplayTasks",
 			
 			// GMS(Gameplay Message Router)
 			"GameplayMessageRuntime"
