@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0.0",
+  "FriendlyName": "Reusable Steam Sessions",
+  "Description": "Reusable listen-server session management for OnlineSubsystem and Steam.",
+  "Category": "Online",
+  "CreatedBy": "ProjectKC",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Modules": [
+    {
+      "Name": "ReusableSteamSessions",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "OnlineSubsystemSteam",
+      "Enabled": true,
+      "Optional": true
+    }
+  ]
+}
