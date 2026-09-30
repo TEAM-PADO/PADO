@@ -21,6 +21,13 @@ public class PADO : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
+
+			// Network
+			"DeveloperSettings",
+			"ReusableSteamSessions",
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils",
+			"CoreOnline",
 			
 			// GMS(Gameplay Message Router)
 			"GameplayMessageRuntime"
