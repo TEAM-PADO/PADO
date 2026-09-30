@@ -6,6 +6,7 @@
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
+#include "PADO/Interaction/Component/PDInteractionComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 
 APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
@@ -17,6 +18,8 @@ APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
 		CreateDefaultSubobject<UPDHeldItemComponent>(TEXT("HeldItem"));
 	KnockbackComponent =
 		CreateDefaultSubobject<UPDKnockbackComponent>(TEXT("Knockback"));
+	InteractionComponent =
+		CreateDefaultSubobject<UPDInteractionComponent>(TEXT("Interaction"));
 }
 
 UAbilitySystemComponent* APDCharacterBase::GetAbilitySystemComponent() const

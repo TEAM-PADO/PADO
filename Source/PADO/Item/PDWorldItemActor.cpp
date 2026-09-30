@@ -10,6 +10,7 @@
 #include "Net/UnrealNetwork.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
+#include "PADO/Character/PDCharacterBase.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
@@ -250,6 +251,26 @@ bool APDWorldItemActor::ActivateUseWithTarget(AActor* TargetActor)
 {
 	return HasAuthority() && RuntimeState.State == EPDWorldItemState::Held &&
 		IsUsable() && AbilitySourceComponent->TryActivateWithTarget(TargetActor);
+}
+
+bool APDWorldItemActor::CanInteract_Implementation(
+	const FPDInteractionContextStruct& Context) const
+{
+	// 한 번에 하나만 드는 것은 아이템 줍기의 규칙이다. 상호작용 전체의 규칙이
+	// 아니므로, 아이템을 든 주체도 다른 대상과는 상호작용할 수 있다.
+	const UPDHeldItemComponent* HeldItems = Context.Instigator
+		? Context.Instigator->GetHeldItemComponent()
+		: nullptr;
+	return HeldItems && HeldItems->CanPickUpItem(this);
+}
+
+bool APDWorldItemActor::Interact_Implementation(
+	const FPDInteractionContextStruct& Context)
+{
+	UPDHeldItemComponent* HeldItems = Context.Instigator
+		? Context.Instigator->GetHeldItemComponent()
+		: nullptr;
+	return HeldItems && HeldItems->TryPickUp(this);
 }
 
 bool APDWorldItemActor::CanBePickedUp() const

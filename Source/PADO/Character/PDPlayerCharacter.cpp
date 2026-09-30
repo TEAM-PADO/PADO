@@ -7,13 +7,12 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
-#include "Engine/OverlapResult.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
 #include "PADO/Character/PDPlayerState.h"
 #include "PADO/Character/PDRecoilComponent.h"
 #include "Engine/World.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
-#include "PADO/Item/PDWorldItemActor.h"
+#include "PADO/Interaction/Component/PDInteractionComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDPlayerCharacter, Log, All);
 
@@ -227,16 +226,10 @@ void APDPlayerCharacter::StopSprinting_Implementation()
 
 void APDPlayerCharacter::Interact_Implementation()
 {
-	// 한 번에 하나만 들 수 있다. 교체하려면 먼저 내려놓는다.
-	UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
-	if (!HeldItems || HeldItems->HasHeldItem())
+	// 무엇을 할지는 대상이 정한다. 아이템을 이미 들고 있으면 아이템이 거부한다.
+	if (UPDInteractionComponent* Interaction = GetInteractionComponent())
 	{
-		return;
-	}
-
-	if (APDWorldItemActor* Target = FindInteractTarget())
-	{
-		HeldItems->RequestPickUp(Target);
+		Interaction->TryInteract();
 	}
 }
 
@@ -246,96 +239,6 @@ void APDPlayerCharacter::DropHeldItem()
 	{
 		HeldItems->TryDropHeldItem();
 	}
-}
-
-APDWorldItemActor* APDPlayerCharacter::FindInteractTarget() const
-{
-	const UWorld* World = GetWorld();
-	const UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
-	if (!World || !FollowCamera || !HeldItems)
-	{
-		return nullptr;
-	}
-
-	const FVector TraceStart = FollowCamera->GetComponentLocation();
-	const FVector TraceEnd =
-		TraceStart + FollowCamera->GetForwardVector() * InteractTraceDistance;
-
-	FCollisionQueryParams QueryParams(TEXT("PDInteractTrace"), false, this);
-	TArray<FHitResult> Hits;
-	World->SweepMultiByChannel(
-		Hits,
-		TraceStart,
-		TraceEnd,
-		FQuat::Identity,
-		ECC_Visibility,
-		FCollisionShape::MakeSphere(InteractTraceRadius),
-		QueryParams);
-
-	// Sweep 결과는 시작점에서 가까운 순서다. 카메라가 캐릭터 뒤에 있으므로
-	// 먼저 걸리는 것이 곧 시선상 가장 앞의 후보다. CanPickUpItem이 캐릭터
-	// 기준 거리와 아이템 상태를 함께 거른다.
-	for (const FHitResult& Hit : Hits)
-	{
-		APDWorldItemActor* Item = Cast<APDWorldItemActor>(Hit.GetActor());
-		if (IsValid(Item) && HeldItems->CanPickUpItem(Item))
-		{
-			return Item;
-		}
-	}
-
-	// 시선 Sweep만으로는 바닥에 놓인 아이템을 집을 수 없다. 카메라가 캐릭터
-	// 중심 높이에서 수평으로 나가는 동안 아이템은 그보다 한참 아래에 있어서
-	// 스쳐 지나간다. 드롭한 아이템을 다시 줍는 경우가 특히 그렇다.
-	// 그래서 시선에 걸린 것이 없으면 줍기 반경 안의 가장 가까운 후보를 고른다.
-	return FindNearestPickupCandidate();
-}
-
-APDWorldItemActor* APDPlayerCharacter::FindNearestPickupCandidate() const
-{
-	const UWorld* World = GetWorld();
-	const UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
-	if (!World || !HeldItems)
-	{
-		return nullptr;
-	}
-
-	const float SearchRadius = HeldItems->GetMaxPickupDistance();
-	if (SearchRadius <= 0.0f)
-	{
-		return nullptr;
-	}
-
-	FCollisionQueryParams QueryParams(TEXT("PDPickupOverlap"), false, this);
-	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByChannel(
-		Overlaps,
-		GetActorLocation(),
-		FQuat::Identity,
-		ECC_Visibility,
-		FCollisionShape::MakeSphere(SearchRadius),
-		QueryParams);
-
-	APDWorldItemActor* Nearest = nullptr;
-	double NearestDistanceSquared = TNumericLimits<double>::Max();
-	for (const FOverlapResult& Overlap : Overlaps)
-	{
-		APDWorldItemActor* Item = Cast<APDWorldItemActor>(Overlap.GetActor());
-		if (!IsValid(Item) || !HeldItems->CanPickUpItem(Item))
-		{
-			continue;
-		}
-
-		const double DistanceSquared =
-			FVector::DistSquared(GetActorLocation(), Item->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
-		{
-			NearestDistanceSquared = DistanceSquared;
-			Nearest = Item;
-		}
-	}
-
-	return Nearest;
 }
 
 void APDPlayerCharacter::Attack_Implementation()

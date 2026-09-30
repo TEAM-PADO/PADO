@@ -4,6 +4,7 @@
 #include "Engine/NetSerialization.h"
 #include "GameFramework/Actor.h"
 #include "GameplayAbilitySpecHandle.h"
+#include "PADO/Interaction/Interface/PDInteractable.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
 #include "PDWorldItemActor.generated.h"
 
@@ -52,7 +53,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 
 /** 인벤토리와 독립적으로 월드와 Holder 사이를 오가는 Ability Source Actor다. */
 UCLASS(Blueprintable)
-class PADO_API APDWorldItemActor : public AActor, public IPDReloadableItem
+class PADO_API APDWorldItemActor
+	: public AActor
+	, public IPDReloadableItem
+	, public IPDInteractable
 {
 	GENERATED_BODY()
 
@@ -60,6 +64,14 @@ public:
 	APDWorldItemActor();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
+
+	/** 상호작용 주체가 지금 이 아이템을 집을 수 있는지다. 한 번에 하나만 든다. */
+	virtual bool CanInteract_Implementation(
+		const FPDInteractionContextStruct& Context) const override;
+
+	/** 상호작용 주체가 이 아이템을 집는다. 서버에서만 불린다. */
+	virtual bool Interact_Implementation(
+		const FPDInteractionContextStruct& Context) override;
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(

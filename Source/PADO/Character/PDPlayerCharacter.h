@@ -7,7 +7,6 @@
 #include "PADO/Character/PDCharacterBase.h"
 #include "PDPlayerCharacter.generated.h"
 
-class APDWorldItemActor;
 class UCameraComponent;
 class USpringArmComponent;
 class UPDRecoilComponent;
@@ -88,8 +87,8 @@ public:
 	virtual void StopSprinting_Implementation();
 
 	/**
-	 * 시선 앞의 월드 아이템을 집는다.
-	 * 이미 아이템을 들고 있으면 아무것도 하지 않는다. 먼저 내려놓아야 한다.
+	 * 시선 앞의 상호작용 대상과 상호작용한다.
+	 * 무엇을 할지는 대상이 정한다. 아이템이면 줍고, 이미 들고 있으면 대상이 거부한다.
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "PADO|Input")
 	void Interact();
@@ -98,18 +97,6 @@ public:
 	/** 현재 들고 있는 아이템을 내려놓는다. 서버가 확정한다. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
 	void DropHeldItem();
-
-	/**
-	 * 카메라 시선을 따라 Sweep해서 지금 집을 수 있는 아이템을 고른다.
-	 * 시선에 걸린 것이 없으면 줍기 반경 안의 가장 가까운 아이템으로 넘어간다.
-	 * 실제 줍기 거리는 Held Item Component가 서버에서 확정한다.
-	 */
-	UFUNCTION(BlueprintPure, Category = "PADO|Interaction")
-	APDWorldItemActor* FindInteractTarget() const;
-
-	/** 줍기 반경 안에서 캐릭터와 가장 가까운 아이템을 고른다. */
-	UFUNCTION(BlueprintPure, Category = "PADO|Interaction")
-	APDWorldItemActor* FindNearestPickupCandidate() const;
 
 	/** 조준 입력을 누르고 있는 동안 견착으로 들어간다. 조준 중이었다면 견착으로 내려온다. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
@@ -190,25 +177,6 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Recoil", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDRecoilComponent> RecoilComponent;
-
-	/** 시선 Sweep의 굵기다. 크게 잡을수록 작은 아이템을 조준하기 쉽다. */
-	UPROPERTY(
-		EditDefaultsOnly,
-		BlueprintReadOnly,
-		Category = "PADO|Interaction",
-		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
-	float InteractTraceRadius = 24.0f;
-
-	/**
-	 * 카메라에서 앞으로 탐색할 거리다. 3인칭 카메라가 캐릭터 뒤에 있으므로
-	 * 실제 줍기 반경보다 길게 잡는다. 거리 판정 자체는 서버가 캐릭터 기준으로 한다.
-	 */
-	UPROPERTY(
-		EditDefaultsOnly,
-		BlueprintReadOnly,
-		Category = "PADO|Interaction",
-		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
-	float InteractTraceDistance = 900.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Aim", meta = (AllowPrivateAccess = "true"))
 	FPDAimCameraPose IdleCameraPose;

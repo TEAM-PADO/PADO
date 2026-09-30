@@ -5,9 +5,8 @@
 #include "Components/MeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/Pawn.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
+#include "PADO/Core/PDViewPoint.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDTargeting, Log, All);
@@ -225,26 +224,9 @@ bool UPDAimLineTraceTargeting::ResolveAimPoint(
 		return false;
 	}
 
-	OutAimRotation = SourceActor->GetActorRotation();
-	if (const APawn* SourcePawn = Cast<APawn>(SourceActor))
-	{
-		OutAimRotation = SourcePawn->GetBaseAimRotation();
-
-		// 3인칭 카메라는 캐릭터 뒤 위쪽에 있다. Controller 시점을 써야
-		// 화면 중앙이 가리키는 지점과 판정이 일치한다.
-		if (const AController* SourceController = SourcePawn->GetController())
-		{
-			SourceController->GetPlayerViewPoint(OutViewStart, OutAimRotation);
-		}
-		else
-		{
-			SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
-		}
-	}
-	else
-	{
-		SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
-	}
+	// 3인칭 카메라는 캐릭터 뒤 위쪽에 있다. Controller 시점을 써야
+	// 화면 중앙이 가리키는 지점과 판정이 일치한다.
+	PDViewPoint::GetActorViewPoint(*SourceActor, OutViewStart, OutAimRotation);
 
 	const FVector ViewEnd =
 		OutViewStart + OutAimRotation.Vector() * TraceDistance;

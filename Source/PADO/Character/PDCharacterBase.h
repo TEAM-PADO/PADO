@@ -11,6 +11,7 @@ class UAbilitySystemComponent;
 class UPDAbilitySystemComponent;
 class UPDCharacterMovementComponent;
 class UPDHeldItemComponent;
+class UPDInteractionComponent;
 class UPDKnockbackComponent;
 struct FOnAttributeChangeData;
 
@@ -56,6 +57,12 @@ public:
 		return HeldItemComponent;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Interaction")
+	UPDInteractionComponent* GetInteractionComponent() const
+	{
+		return InteractionComponent;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
 	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
 
@@ -77,6 +84,10 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDKnockbackComponent> KnockbackComponent;
+
+	/** 상호작용 대상을 고르고 서버에 요청한다. 손 닿는 거리를 가진다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Interaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDInteractionComponent> InteractionComponent;
 
 	/** 연결된 ASC다. 이 몸이 소유하지 않을 수 있으므로 약참조로 둔다. */
 	TWeakObjectPtr<UPDAbilitySystemComponent> AbilitySystem;
