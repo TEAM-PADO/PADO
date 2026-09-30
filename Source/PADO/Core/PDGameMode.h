@@ -12,4 +12,7 @@ UCLASS(Blueprintable)
 class PADO_API APDGameMode : public AGameMode
 {
 	GENERATED_BODY()
+
+public:
+	explicit APDGameMode(const FObjectInitializer& ObjectInitializer);
 };

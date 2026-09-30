@@ -421,9 +421,11 @@ void UPDGA_ActionRuntimeBase::StartLoopingCue()
 	UObject* SourceObject = GetCurrentSourceObject();
 	AActor* EffectCauser = IsValid(SourceItem) ? SourceItem : AvatarActor;
 
+	// Instigator는 논리적 주체(ASC 소유자), EffectCauser는 물리적 원인(아이템)이다.
+	// Cue 파라미터의 Instigator는 연출 기준이라 아바타로 둔다.
 	FGameplayEffectContextHandle EffectContext =
 		AbilitySystem->MakeEffectContext();
-	EffectContext.AddInstigator(AvatarActor, EffectCauser);
+	EffectContext.AddInstigator(AbilitySystem->GetOwnerActor(), EffectCauser);
 	if (SourceObject)
 	{
 		EffectContext.AddSourceObject(SourceObject);

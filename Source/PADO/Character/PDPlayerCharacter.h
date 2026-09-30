@@ -3,22 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AbilitySystemInterface.h"
-#include "GameFramework/Character.h"
 #include "PADO/AbilitySystem/Interface/PDAimStateProvider.h"
+#include "PADO/Character/PDCharacterBase.h"
 #include "PDPlayerCharacter.generated.h"
 
 class APDWorldItemActor;
 class UCameraComponent;
 class USpringArmComponent;
-class UAbilitySystemComponent;
-class UPDAbilitySystemComponent;
-class UPDHeldItemComponent;
-class UPDKnockbackComponent;
 class UPDRecoilComponent;
-class UPDCharacterMovementComponent;
-class UPDMovementAttributeSet;
-struct FOnAttributeChangeData;
 
 /** 조준 단계별 카메라 배치다. */
 USTRUCT(BlueprintType)
@@ -51,15 +43,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	NewAimState);
 
 /**
- * Base third-person player character.
+ * 플레이어가 조종하는 3인칭 캐릭터다.
+ *
+ * 카메라, 조준, 반동, 입력처럼 조종하는 사람에게만 의미가 있는 것을 가진다.
+ * 다른 캐릭터와 공유하는 몸의 동작은 APDCharacterBase에 있다.
+ * Ability System은 APDPlayerState가 소유하고, 이 캐릭터는 아바타로 연결된다.
  *
  * Input is owned and bound by APDPlayerController. The controller forwards
  * gameplay intent to the public functions on this class.
  */
 UCLASS(Blueprintable)
 class PADO_API APDPlayerCharacter
-	: public ACharacter
-	, public IAbilitySystemInterface
+	: public APDCharacterBase
 	, public IPDAimStateProvider
 {
 	GENERATED_BODY()
@@ -67,7 +62,6 @@ class PADO_API APDPlayerCharacter
 public:
 	explicit APDPlayerCharacter(const FObjectInitializer& ObjectInitializer);
 	virtual void Tick(float DeltaSeconds) override;
-	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 	/** Applies camera-relative movement input. X is right and Y is forward. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
@@ -160,18 +154,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PADO|Input")
 	bool ReloadHeldItem();
 
-	UFUNCTION(BlueprintPure, Category = "PADO|Ability")
-	UPDAbilitySystemComponent* GetPDAbilitySystemComponent() const
-	{
-		return AbilitySystemComponent;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "PADO|Item")
-	UPDHeldItemComponent* GetHeldItemComponent() const
-	{
-		return HeldItemComponent;
-	}
-
 	UFUNCTION(BlueprintPure, Category = "PADO|Recoil")
 	UPDRecoilComponent* GetRecoilComponent() const { return RecoilComponent; }
 
@@ -181,27 +163,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Camera")
 	UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 
-	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
-	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
-
-	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
-	const UPDMovementAttributeSet* GetMovementAttributes() const
-	{
-		return MovementAttributes;
-	}
-
 protected:
-	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_PlayerState() override;
 	virtual void OnRep_Controller() override;
 	virtual void PawnClientRestart() override;
 
 private:
-	void InitializeAbilityActorInfo();
+	/**
+	 * PlayerState의 ASC에 이 몸을 연결한다.
+	 *
+	 * 서버는 빙의 시점에 PlayerState가 있지만, 클라이언트는 PlayerState·
+	 * Controller·Pawn이 제각각 도착한다. 도착할 수 있는 경계마다 부르고,
+	 * 아직 없으면 다음 경계에서 다시 시도한다.
+	 */
+	void InitializePlayerAbilitySystem();
+
 	const FPDAimCameraPose& GetAimCameraPose(EPDAimState State) const;
 	void UpdateAimCamera(float DeltaSeconds);
-	void PushMoveSpeedToMovement();
-	void HandleMoveSpeedChanged(const FOnAttributeChangeData& ChangeData);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -209,21 +188,8 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FollowCamera;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPDAbilitySystemComponent> AbilitySystemComponent;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Item", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPDHeldItemComponent> HeldItemComponent;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPDKnockbackComponent> KnockbackComponent;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Recoil", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDRecoilComponent> RecoilComponent;
-
-	/** 슬로우·헤이스트가 붙는 계층이다. ASC가 소유자로 등록한다. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Movement", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPDMovementAttributeSet> MovementAttributes;
 
 	/** 시선 Sweep의 굵기다. 크게 잡을수록 작은 아이템을 조준하기 쉽다. */
 	UPROPERTY(
@@ -271,6 +237,6 @@ private:
 	 */
 	EPDAimState LastBroadcastAimState = EPDAimState::Idle;
 
-	/** ASC 초기화 경계를 여러 번 지나므로 중복 등록을 막는다. */
-	bool bMoveSpeedDelegateBound = false;
+	/** PlayerState 클래스 설정 오류는 경계마다 반복되므로 한 번만 알린다. */
+	bool bWarnedUnexpectedPlayerState = false;
 };

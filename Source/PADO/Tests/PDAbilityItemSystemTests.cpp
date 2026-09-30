@@ -28,6 +28,7 @@
 #include "PADO/AbilitySystem/Targeting/PDSweepTargeting.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Character/PDPlayerCharacter.h"
+#include "PADO/Tests/PDCharacterTestUtils.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
@@ -274,13 +275,11 @@ bool FPDHeldItemAbilityLifecycleTest::RunTest(const FString& Parameters)
 		GEngine->CreateNewWorldContext(EWorldType::Game);
 	WorldContext.SetCurrentWorld(TestWorld);
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	APDWorldItemActor* Item = TestWorld->SpawnActor<APDWorldItemActor>();
 	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
 		TestNotNull(TEXT("World Item을 스폰한다."), Item))
 	{
-		Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
-
 		UStaticMesh* HandMeshAsset = NewObject<UStaticMesh>(Holder);
 		UStaticMeshSocket* HandSocket =
 			NewObject<UStaticMeshSocket>(HandMeshAsset);

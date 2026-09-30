@@ -19,6 +19,7 @@
 #include "GameplayEffectTypes.h"
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayAbilitySpec.h"
 #include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
@@ -35,6 +36,7 @@
 #include "PADO/AbilitySystem/Targeting/PDAimLineTraceTargeting.h"
 #include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
 #include "PADO/Character/PDPlayerCharacter.h"
+#include "PADO/Tests/PDCharacterTestUtils.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
@@ -138,6 +140,21 @@ namespace PDWeaponSystemTests
 		if (OutWorldContext)
 		{
 			OutWorldContext->SetCurrentWorld(World);
+		}
+		return World;
+	}
+
+	/**
+	 * 액터 초기화까지 마친 World다. 이후 스폰은 실제 게임처럼
+	 * InitializeComponent와 PostInitializeComponents를 거치고, 파괴하면 EndPlay가
+	 * 돈다. Epic의 GAS 테스트와 같은 준비 방식이다.
+	 */
+	UWorld* CreateInitializedTestWorld(FWorldContext*& OutWorldContext)
+	{
+		UWorld* World = CreateTestWorld(OutWorldContext);
+		if (World)
+		{
+			World->InitializeActorsForPlay(FURL());
 		}
 		return World;
 	}
@@ -303,12 +320,11 @@ bool FPDWeaponMagazineLifecycleTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
 	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
 		TestNotNull(TEXT("Weapon을 스폰한다."), Weapon))
 	{
-		Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
 		TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder));
 
 		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Weapon, 5, false);
@@ -401,13 +417,12 @@ bool FPDWeaponInputFiringTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
 	{
 		DestroyTestWorld(TestWorld);
 		return false;
 	}
-	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
 	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
 	{
 		DestroyTestWorld(TestWorld);
@@ -498,11 +513,10 @@ bool FPDLocalCooldownClockTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder))
 	{
 		UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
-		AbilitySystem->InitAbilityActorInfo(Holder, Holder);
 		const FGameplayTag CooldownTag =
 			FGameplayTag::RequestGameplayTag(TEXT("Cooldown.Weapon.Fire"));
 		auto SetFrame = [TestWorld](double Time, float FrameDelta)
@@ -568,13 +582,12 @@ bool FPDLocalCooldownOverReplicatedTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
 	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
 		TestNotNull(TEXT("무기를 스폰한다."), Weapon))
 	{
 		UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
-		AbilitySystem->InitAbilityActorInfo(Holder, Holder);
 		TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder));
 		UPDHeldItemComponent* HeldItems = Holder->GetHeldItemComponent();
 		UPDItemDefinition* Definition = MakeMagazineItemDefinition(Weapon, 5, true);
@@ -624,13 +637,12 @@ bool FPDItemInteractionInputTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
 	{
 		DestroyTestWorld(TestWorld);
 		return false;
 	}
-	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
 	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
 	{
 		DestroyTestWorld(TestWorld);
@@ -795,13 +807,12 @@ bool FPDAimStateTransitionTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
 	{
 		DestroyTestWorld(TestWorld);
 		return false;
 	}
-	Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
 	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
 	{
 		DestroyTestWorld(TestWorld);
@@ -908,7 +919,7 @@ bool FPDMovementStanceSpeedTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	if (!TestNotNull(TEXT("Holder를 스폰한다."), Holder))
 	{
 		DestroyTestWorld(TestWorld);
@@ -923,15 +934,11 @@ bool FPDMovementStanceSpeedTest::RunTest(const FString& Parameters)
 	}
 
 	UPDAbilitySystemComponent* AbilitySystem = Holder->GetPDAbilitySystemComponent();
-	AbilitySystem->InitAbilityActorInfo(Holder, Holder);
 	if (!TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)))
 	{
 		DestroyTestWorld(TestWorld);
 		return false;
 	}
-
-	// 어트리뷰트 변경 델리게이트는 캐릭터의 BeginPlay 경계에서 연결된다.
-	Holder->DispatchBeginPlay();
 
 	const float BaseSpeed = AbilitySystem->GetNumericAttribute(
 		UPDMovementAttributeSet::GetMoveSpeedAttribute());
@@ -1015,7 +1022,7 @@ bool FPDMovementStancePredictionTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	UPDCharacterMovementComponent* Movement =
 		Holder ? Holder->GetPDCharacterMovement() : nullptr;
 	if (!TestNotNull(TEXT("커스텀 무브먼트를 얻는다."), Movement))
@@ -1146,7 +1153,7 @@ bool FPDWeaponRecoilComponentTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Holder = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerCharacter* Holder = PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
 	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
 	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
 		TestNotNull(TEXT("Weapon을 스폰한다."), Weapon))
@@ -1154,9 +1161,6 @@ bool FPDWeaponRecoilComponentTest::RunTest(const FString& Parameters)
 		UPDRecoilComponent* RecoilComponent = Holder->GetRecoilComponent();
 		if (TestNotNull(TEXT("캐릭터에 반동 컴포넌트가 있다."), RecoilComponent))
 		{
-			Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(
-				Holder,
-				Holder);
 			TestTrue(TEXT("Holder 손 소켓을 구성한다."),
 				ConfigureHolderSocket(Holder));
 			UPDItemDefinition* Definition =
@@ -1511,14 +1515,13 @@ namespace PDFireActionTests
 				return false;
 			}
 
-			Holder = World->SpawnActor<APDPlayerCharacter>();
+			Holder = PDCharacterTestUtils::SpawnPlayerCharacter(World);
 			Weapon = World->SpawnActor<APDWorldItemActor>();
 			if (!Holder || !Weapon)
 			{
 				return false;
 			}
 
-			Holder->GetPDAbilitySystemComponent()->InitAbilityActorInfo(Holder, Holder);
 			if (!ConfigureHolderSocket(Holder) ||
 				!Weapon->InitializeItem(MakeDefinition(Weapon)))
 			{
@@ -1863,16 +1866,15 @@ bool FPDFireActionServerProcessingTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	APDPlayerCharacter* Target = Rig.World->SpawnActor<APDPlayerCharacter>(
-		FVector(300.0f, 0.0f, 0.0f),
-		FRotator::ZeroRotator);
+	APDPlayerCharacter* Target = PDCharacterTestUtils::SpawnPlayerCharacter(
+		Rig.World,
+		FVector(300.0f, 0.0f, 0.0f));
 	UPDGA_FireAction* FireAction = Rig.FindFireAction();
 	if (TestNotNull(TEXT("대상을 스폰한다."), Target) &&
 		TestNotNull(TEXT("활성 Fire Action을 찾는다."), FireAction))
 	{
 		UPDAbilitySystemComponent* TargetAbilitySystem =
 			Target->GetPDAbilitySystemComponent();
-		TargetAbilitySystem->InitAbilityActorInfo(Target, Target);
 		UPDWeaponMagazineComponent* Magazine = Rig.Magazine;
 
 		// 받은 판정을 다시 추적하지 않고 그대로 적용한다. 대상은 사수 뒤에 있지만
@@ -1881,6 +1883,26 @@ bool FPDFireActionServerProcessingTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("발마다 탄약을 쓴다."), Magazine->GetCurrentMagazineAmmo(), 28);
 		TestEqual(TEXT("기록된 명중을 발마다 적용한다."),
 			TargetAbilitySystem->GetTagCount(HitMarkTag), 2);
+
+		// 명중의 주체는 사수의 PlayerState, 물리적 원인은 무기다. 사수의 몸이
+		// 먼저 사라져도 주체가 남도록 Instigator에 몸을 넣지 않는다.
+		const TArray<FActiveGameplayEffectHandle> HitEffects =
+			TargetAbilitySystem->GetActiveEffects(FGameplayEffectQuery());
+		if (TestTrue(TEXT("명중 효과가 대상에 남아 있다."), HitEffects.Num() > 0))
+		{
+			const FActiveGameplayEffect* HitEffect =
+				TargetAbilitySystem->GetActiveGameplayEffect(HitEffects[0]);
+			const FGameplayEffectContextHandle HitContext = HitEffect
+				? HitEffect->Spec.GetContext()
+				: FGameplayEffectContextHandle();
+			TestTrue(TEXT("명중의 Instigator는 사수의 PlayerState다."),
+				HitContext.GetInstigator() == Rig.Holder->GetPlayerState());
+			TestTrue(TEXT("명중의 EffectCauser는 무기다."),
+				HitContext.GetEffectCauser() == Rig.Weapon);
+			TestTrue(TEXT("명중의 Instigator ASC는 사수의 ASC다."),
+				HitContext.GetInstigatorAbilitySystemComponent() ==
+					Rig.Holder->GetPDAbilitySystemComponent());
+		}
 
 		FPDFireShotBatchStruct OtherWeapon = Rig.MakeBatch(3, 1, Target);
 		OtherWeapon.SourceObject = Target;
@@ -2131,6 +2153,242 @@ bool FPDFireActionLifecycleTest::RunTest(const FString& Parameters)
 		Rig.HeldItems->ReleaseHeldItemUse();
 	}
 	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDCharacterAbilitySystemPossessionTest,
+	"PADO.Character.AbilitySystem.Possession",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDCharacterAbilitySystemPossessionTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateInitializedTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("빙의 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Character = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APDPlayerState* PlayerState =
+		PDCharacterTestUtils::SpawnPlayerState(TestWorld);
+	APlayerController* Controller = TestWorld->SpawnActor<APlayerController>();
+	if (TestNotNull(TEXT("캐릭터를 스폰한다."), Character) &&
+		TestNotNull(TEXT("PlayerState를 스폰한다."), PlayerState) &&
+		TestNotNull(TEXT("컨트롤러를 스폰한다."), Controller))
+	{
+		// 게임에서는 GameMode가 컨트롤러의 PlayerState를 만든다. 빙의하면
+		// 엔진이 이 PlayerState를 몸에 넘기고, 캐릭터가 그 ASC에 연결된다.
+		Controller->PlayerState = PlayerState;
+		PlayerState->SetOwner(Controller);
+		Controller->Possess(Character);
+
+		UPDAbilitySystemComponent* AbilitySystem =
+			PlayerState->GetPDAbilitySystemComponent();
+		TestTrue(TEXT("캐릭터는 PlayerState의 ASC를 쓴다."),
+			Character->GetAbilitySystemComponent() == AbilitySystem);
+		TestNull(TEXT("캐릭터에는 따로 ASC가 없다."),
+			Character->FindComponentByClass<UAbilitySystemComponent>());
+		TestTrue(TEXT("ASC의 주체는 PlayerState다."),
+			AbilitySystem->GetOwnerActor() == PlayerState);
+		TestTrue(TEXT("ASC의 아바타는 캐릭터다."),
+			AbilitySystem->GetAvatarActor() == Character);
+		TestTrue(TEXT("PlayerState의 Owner 체인으로 컨트롤러를 찾는다."),
+			AbilitySystem->AbilityActorInfo->PlayerController.Get() == Controller);
+
+		bool bFoundMoveSpeed = false;
+		const float MoveSpeed = AbilitySystem->GetGameplayAttributeValue(
+			UPDMovementAttributeSet::GetMoveSpeedAttribute(),
+			bFoundMoveSpeed);
+		TestTrue(TEXT("이동 속도 Attribute는 PlayerState에 있다."), bFoundMoveSpeed);
+		TestEqual(TEXT("빙의 직후 이동 속도가 무브먼트에 반영된다."),
+			Character->GetPDCharacterMovement()->GetAttributeMoveSpeed(),
+			MoveSpeed,
+			0.01f);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDCharacterAbilitySystemUnexpectedPlayerStateTest,
+	"PADO.Character.AbilitySystem.UnexpectedPlayerState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDCharacterAbilitySystemUnexpectedPlayerStateTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateInitializedTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("PlayerState 설정 오류 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Character = TestWorld->SpawnActor<APDPlayerCharacter>();
+	APlayerState* PlayerState = TestWorld->SpawnActor<APlayerState>();
+	APlayerController* Controller = TestWorld->SpawnActor<APlayerController>();
+	if (TestNotNull(TEXT("캐릭터를 스폰한다."), Character) &&
+		TestNotNull(TEXT("PlayerState를 스폰한다."), PlayerState) &&
+		TestNotNull(TEXT("컨트롤러를 스폰한다."), Controller))
+	{
+		// 빙의는 PossessedBy와 PawnClientRestart 두 경계를 지난다. 설정 오류는
+		// 경계마다 반복되지만 한 번만 알린다.
+		AddExpectedMessagePlain(
+			TEXT("APDPlayerState가 아니라서"),
+			ELogVerbosity::Warning,
+			EAutomationExpectedMessageFlags::Contains,
+			1);
+
+		const float DefaultSpeed =
+			Character->GetPDCharacterMovement()->GetAttributeMoveSpeed();
+		Controller->PlayerState = PlayerState;
+		PlayerState->SetOwner(Controller);
+		Controller->Possess(Character);
+
+		TestNull(TEXT("GameMode 설정이 틀리면 연결할 ASC가 없다."),
+			Character->GetAbilitySystemComponent());
+		TestEqual(TEXT("ASC가 없어도 이동 속도는 무브먼트 기본값을 유지한다."),
+			Character->GetPDCharacterMovement()->GetAttributeMoveSpeed(),
+			DefaultSpeed,
+			0.01f);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDCharacterAbilitySystemAvatarHandOffTest,
+	"PADO.Character.AbilitySystem.AvatarHandOff",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDCharacterAbilitySystemAvatarHandOffTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateInitializedTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("몸 교체 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* FirstBody =
+		PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
+	APDPlayerCharacter* SecondBody = TestWorld->SpawnActor<APDPlayerCharacter>(
+		FVector(300.0f, 0.0f, 0.0f),
+		FRotator::ZeroRotator);
+	APDPlayerState* PlayerState =
+		FirstBody ? FirstBody->GetPlayerState<APDPlayerState>() : nullptr;
+	if (TestNotNull(TEXT("첫 번째 몸을 스폰한다."), FirstBody) &&
+		TestNotNull(TEXT("두 번째 몸을 스폰한다."), SecondBody) &&
+		TestNotNull(TEXT("첫 번째 몸에 PlayerState가 있다."), PlayerState))
+	{
+		UPDAbilitySystemComponent* AbilitySystem =
+			PlayerState->GetPDAbilitySystemComponent();
+		const float BaseSpeed = AbilitySystem->GetNumericAttribute(
+			UPDMovementAttributeSet::GetMoveSpeedAttribute());
+
+		// 리스폰처럼 같은 PlayerState에 새 몸이 연결된다. 클라이언트에서는
+		// 이전 몸의 파괴보다 새 몸이 먼저 도착할 수 있다.
+		SecondBody->SetPlayerState(PlayerState);
+		SecondBody->InitializeAbilitySystem(AbilitySystem, PlayerState);
+
+		TestTrue(TEXT("아바타가 새 몸으로 넘어간다."),
+			AbilitySystem->GetAvatarActor() == SecondBody);
+		TestTrue(TEXT("새 몸은 같은 ASC를 쓴다."),
+			SecondBody->GetAbilitySystemComponent() == AbilitySystem);
+		TestNull(TEXT("이전 몸은 ASC 연결을 잃는다."),
+			FirstBody->GetAbilitySystemComponent());
+
+		UPDGE_MoveSpeedMultiplier* SlowEffect =
+			NewObject<UPDGE_MoveSpeedMultiplier>(GetTransientPackage());
+		FGameplayEffectSpec SlowSpec(
+			SlowEffect,
+			AbilitySystem->MakeEffectContext(),
+			1.0f);
+		SlowSpec.SetSetByCallerMagnitude(TAG_PD_Data_MoveSpeed_Multiplier, 0.5f);
+		AbilitySystem->ApplyGameplayEffectSpecToSelf(SlowSpec);
+
+		TestEqual(TEXT("바뀐 이동 속도는 새 몸에 반영된다."),
+			SecondBody->GetPDCharacterMovement()->GetAttributeMoveSpeed(),
+			BaseSpeed * 0.5f,
+			0.01f);
+		TestEqual(TEXT("이전 몸은 더 이상 이동 속도를 받지 않는다."),
+			FirstBody->GetPDCharacterMovement()->GetAttributeMoveSpeed(),
+			BaseSpeed,
+			0.01f);
+	}
+
+	DestroyTestWorld(TestWorld);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDCharacterAbilitySystemAvatarEndPlayTest,
+	"PADO.Character.AbilitySystem.AvatarEndPlay",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDCharacterAbilitySystemAvatarEndPlayTest::RunTest(const FString& Parameters)
+{
+	using namespace PDWeaponSystemTests;
+	FWorldContext* WorldContext = nullptr;
+	UWorld* TestWorld = CreateInitializedTestWorld(WorldContext);
+	if (!TestNotNull(TEXT("몸 파괴 검증용 World를 만든다."), TestWorld))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Holder =
+		PDCharacterTestUtils::SpawnPlayerCharacter(TestWorld);
+	APDWorldItemActor* Weapon = TestWorld->SpawnActor<APDWorldItemActor>();
+	if (TestNotNull(TEXT("Holder를 스폰한다."), Holder) &&
+		TestNotNull(TEXT("Weapon을 스폰한다."), Weapon) &&
+		TestTrue(TEXT("Holder 손 소켓을 구성한다."), ConfigureHolderSocket(Holder)) &&
+		TestTrue(TEXT("Weapon을 초기화한다."),
+			Weapon->InitializeItem(MakeMagazineItemDefinition(Weapon, 5, false))))
+	{
+		// 몸의 EndPlay는 BeginPlay를 거친 액터에서만 돈다.
+		Holder->DispatchBeginPlay();
+		Weapon->DispatchBeginPlay();
+
+		UPDAbilitySystemComponent* AbilitySystem =
+			Holder->GetPDAbilitySystemComponent();
+		APlayerState* PlayerState = Holder->GetPlayerState();
+		TestTrue(TEXT("무기를 줍는다."),
+			Holder->GetHeldItemComponent()->TryPickUp(Weapon));
+		const FGameplayAbilitySpecHandle WeaponAbility =
+			Weapon->GetAbilitySourceComponent()->GetGrantedAbilityHandle();
+		TestNotNull(TEXT("무기 Ability가 PlayerState의 ASC에 부여된다."),
+			AbilitySystem->FindAbilitySpecFromHandle(WeaponAbility));
+
+		// 몸이 살아 있을 때 만든 문맥이다. 몸이 사라진 뒤에도 주체가 남아야 한다.
+		const FGameplayEffectContextHandle EffectContext =
+			AbilitySystem->MakeEffectContext();
+
+		Holder->Destroy();
+
+		TestNull(TEXT("몸이 사라지면 들고 있던 무기의 Ability를 회수한다."),
+			AbilitySystem->FindAbilitySpecFromHandle(WeaponAbility));
+		TestTrue(TEXT("무기는 다시 월드 아이템이 된다."),
+			Weapon->GetItemState() == EPDWorldItemState::World);
+		TestNull(TEXT("몸이 사라지면 아바타가 없다."),
+			AbilitySystem->GetAvatarActor());
+		// 파괴된 액터를 가리키는 약참조도 null을 돌려준다. 몸이 연결을 직접
+		// 풀었다면 참조가 파괴된 몸을 가리킨 채 남지 않는다.
+		TestFalse(TEXT("몸이 EndPlay에서 아바타 연결을 직접 푼다."),
+			AbilitySystem->AbilityActorInfo->AvatarActor.IsStale());
+		TestTrue(TEXT("ASC의 주체는 그대로 PlayerState다."),
+			AbilitySystem->GetOwnerActor() == PlayerState);
+		TestTrue(TEXT("몸이 사라져도 문맥의 주체는 남는다."),
+			EffectContext.GetInstigator() == PlayerState);
+	}
+
+	DestroyTestWorld(TestWorld);
 	return true;
 }
 

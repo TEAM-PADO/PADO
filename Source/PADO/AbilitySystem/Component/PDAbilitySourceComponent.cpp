@@ -245,7 +245,11 @@ bool UPDAbilitySourceComponent::TryActivateWithTargetInternal(
 	EventData.OptionalObject = this;
 	if (HitResult)
 	{
+		// Instigator는 논리적 주체(ASC 소유자), EffectCauser는 이 Source를 가진 액터다.
 		EventData.ContextHandle = AbilitySystem->MakeEffectContext();
+		EventData.ContextHandle.AddInstigator(
+			AbilitySystem->GetOwnerActor(),
+			GetOwner());
 		EventData.ContextHandle.AddHitResult(*HitResult, true);
 	}
 
