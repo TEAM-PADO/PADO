@@ -12,4 +12,10 @@ UCLASS(Blueprintable)
 class PADO_API APDGameMode : public AGameMode
 {
 	GENERATED_BODY()
+
+public:
+	/**
+	 * PADO 전용 GameState 클래스 등록
+	 */
+	APDGameMode();
 };
