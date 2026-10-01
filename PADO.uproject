@@ -51,6 +51,7 @@
 		},
 		{
 			"Name": "ChaosVehiclesPlugin",
+			"Enabled": true
 		},
 		{
 			"Name": "ReusableSteamSessions",
