@@ -8,6 +8,7 @@
 #include "PADO/Character/PDCharacterMovementComponent.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
+#include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 
 APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UPDCharacterMovementComponent>(
@@ -20,6 +21,8 @@ APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
 		CreateDefaultSubobject<UPDKnockbackComponent>(TEXT("Knockback"));
 	InteractionComponent =
 		CreateDefaultSubobject<UPDInteractionComponent>(TEXT("Interaction"));
+	VehicleOccupantComponent =
+		CreateDefaultSubobject<UPDVehicleOccupantComponent>(TEXT("VehicleOccupant"));
 }
 
 UAbilitySystemComponent* APDCharacterBase::GetAbilitySystemComponent() const

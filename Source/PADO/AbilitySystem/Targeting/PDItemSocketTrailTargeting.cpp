@@ -7,33 +7,11 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
+#include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
 namespace PDItemSocketTrailTargeting
 {
-	void AddIgnoredSourceActors(
-		FCollisionQueryParams& QueryParams,
-		const AActor& SourceActor,
-		const UObject* SourceObject)
-	{
-		QueryParams.AddIgnoredActor(&SourceActor);
-
-		const AActor* SourceObjectActor = Cast<AActor>(SourceObject);
-		if (!SourceObjectActor)
-		{
-			const UActorComponent* SourceComponent =
-				Cast<UActorComponent>(SourceObject);
-			SourceObjectActor = SourceComponent
-				? SourceComponent->GetOwner()
-				: nullptr;
-		}
-
-		if (SourceObjectActor && SourceObjectActor != &SourceActor)
-		{
-			QueryParams.AddIgnoredActor(SourceObjectActor);
-		}
-	}
-
 	bool IsOwnedOrAttachedTo(
 		const AActor& Candidate,
 		const AActor& PossibleParent)
@@ -227,7 +205,7 @@ void UPDItemSocketTrailTargeting::GatherTraceTargets(
 	FCollisionQueryParams QueryParams(
 		SCENE_QUERY_STAT(PDItemSocketTrailTargeting), false);
 	QueryParams.bFindInitialOverlaps = true;
-	PDItemSocketTrailTargeting::AddIgnoredSourceActors(
+	PDTargetingCollision::AddIgnoredSourceActors(
 		QueryParams, *SourceActor, Context.SourceObject);
 
 	const FCollisionObjectQueryParams ObjectQuery(TargetObjectTypes);
@@ -342,7 +320,7 @@ bool UPDItemSocketTrailTargeting::IsPathUnobstructed(
 
 	FCollisionQueryParams QueryParams(
 		SCENE_QUERY_STAT(PDItemSocketTrailObstruction), false);
-	PDItemSocketTrailTargeting::AddIgnoredSourceActors(
+	PDTargetingCollision::AddIgnoredSourceActors(
 		QueryParams, *SourceActor, Context.SourceObject);
 
 	FHitResult ObstructionHit;

@@ -13,6 +13,7 @@
 #include "Engine/World.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
+#include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDPlayerCharacter, Log, All);
 
@@ -226,6 +227,14 @@ void APDPlayerCharacter::StopSprinting_Implementation()
 
 void APDPlayerCharacter::Interact_Implementation()
 {
+	// 탈것에 타고 있으면 상호작용 입력은 하차다.
+	UPDVehicleOccupantComponent* Occupant = GetVehicleOccupantComponent();
+	if (Occupant && Occupant->IsSeated())
+	{
+		Occupant->RequestExit();
+		return;
+	}
+
 	// 무엇을 할지는 대상이 정한다. 아이템을 이미 들고 있으면 아이템이 거부한다.
 	if (UPDInteractionComponent* Interaction = GetInteractionComponent())
 	{

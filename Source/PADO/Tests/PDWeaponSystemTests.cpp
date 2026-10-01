@@ -37,6 +37,7 @@
 #include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
 #include "PADO/Character/PDPlayerCharacter.h"
 #include "PADO/Tests/PDCharacterTestUtils.h"
+#include "PADO/Tests/PDTestWorldUtils.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
@@ -123,52 +124,10 @@ namespace PDWeaponSystemTests
 		World->GetTimerManager().Tick(DeltaSeconds);
 	}
 
-	UWorld* CreateTestWorld(FWorldContext*& OutWorldContext)
-	{
-		const FName WorldName = MakeUniqueObjectName(
-			nullptr,
-			UWorld::StaticClass(),
-			TEXT("PDWeaponTestWorld"),
-			EUniqueObjectNameOptions::GloballyUnique);
-		UWorld* World = UWorld::CreateWorld(
-			EWorldType::Game,
-			false,
-			WorldName,
-			GetTransientPackage());
-		OutWorldContext = World
-			? &GEngine->CreateNewWorldContext(EWorldType::Game)
-			: nullptr;
-		if (OutWorldContext)
-		{
-			OutWorldContext->SetCurrentWorld(World);
-		}
-		return World;
-	}
-
-	/**
-	 * 액터 초기화까지 마친 World다. 이후 스폰은 실제 게임처럼
-	 * InitializeComponent와 PostInitializeComponents를 거치고, 파괴하면 EndPlay가
-	 * 돈다. Epic의 GAS 테스트와 같은 준비 방식이다.
-	 */
-	UWorld* CreateInitializedTestWorld(FWorldContext*& OutWorldContext)
-	{
-		UWorld* World = CreateTestWorld(OutWorldContext);
-		if (World)
-		{
-			World->InitializeActorsForPlay(FURL());
-		}
-		return World;
-	}
-
-	void DestroyTestWorld(UWorld* World)
-	{
-		if (!World)
-		{
-			return;
-		}
-		World->DestroyWorld(false);
-		GEngine->DestroyWorldContext(World);
-	}
+	// World 준비는 테스트 파일끼리 공유한다.
+	using PDTestWorldUtils::CreateTestWorld;
+	using PDTestWorldUtils::CreateInitializedTestWorld;
+	using PDTestWorldUtils::DestroyTestWorld;
 
 	bool ConfigureHolderSocket(APDPlayerCharacter* Holder)
 	{

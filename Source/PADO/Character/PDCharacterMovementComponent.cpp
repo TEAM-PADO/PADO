@@ -1,6 +1,7 @@
 #include "PADO/Character/PDCharacterMovementComponent.h"
 
 #include "GameFramework/Character.h"
+#include "PADO/Vehicle/Interface/PDControllableVehicle.h"
 
 namespace PDMovementFlags
 {
@@ -94,6 +95,25 @@ void UPDCharacterMovementComponent::SetAimState(EPDAimState NewAimState)
 void UPDCharacterMovementComponent::SetAttributeMoveSpeed(float NewMoveSpeed)
 {
 	AttributeMoveSpeed = FMath::Max(0.0f, NewMoveSpeed);
+}
+
+bool UPDCharacterMovementComponent::CanPushImpactedActor(const AActor* ImpactedActor)
+{
+	return !ImpactedActor || !ImpactedActor->Implements<UPDControllableVehicle>();
+}
+
+void UPDCharacterMovementComponent::ApplyImpactPhysicsForces(
+	const FHitResult& Impact,
+	const FVector& ImpactAcceleration,
+	const FVector& ImpactVelocity)
+{
+	// 서버와 클라이언트가 같은 규칙으로 거르므로 밀기 때문에 어긋나지 않는다.
+	if (!CanPushImpactedActor(Impact.GetActor()))
+	{
+		return;
+	}
+
+	Super::ApplyImpactPhysicsForces(Impact, ImpactAcceleration, ImpactVelocity);
 }
 
 void UPDCharacterMovementComponent::UpdateFromCompressedFlags(uint8 Flags)

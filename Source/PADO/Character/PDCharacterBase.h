@@ -13,6 +13,7 @@ class UPDCharacterMovementComponent;
 class UPDHeldItemComponent;
 class UPDInteractionComponent;
 class UPDKnockbackComponent;
+class UPDVehicleOccupantComponent;
 struct FOnAttributeChangeData;
 
 /**
@@ -63,6 +64,12 @@ public:
 		return InteractionComponent;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Vehicle")
+	UPDVehicleOccupantComponent* GetVehicleOccupantComponent() const
+	{
+		return VehicleOccupantComponent;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
 	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
 
@@ -88,6 +95,10 @@ private:
 	/** 상호작용 대상을 고르고 서버에 요청한다. 손 닿는 거리를 가진다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Interaction", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDInteractionComponent> InteractionComponent;
+
+	/** 탈것에 탄 상태다. 앉으면 몸을 좌석에 붙이고 이동과 충돌을 끈다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDVehicleOccupantComponent> VehicleOccupantComponent;
 
 	/** 연결된 ASC다. 이 몸이 소유하지 않을 수 있으므로 약참조로 둔다. */
 	TWeakObjectPtr<UPDAbilitySystemComponent> AbilitySystem;

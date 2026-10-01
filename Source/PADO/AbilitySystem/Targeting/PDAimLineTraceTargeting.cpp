@@ -6,6 +6,7 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
+#include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 #include "PADO/Core/PDViewPoint.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
@@ -67,12 +68,8 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PDAimLineTrace), true);
 	// 탄착 연출이 표면에 따라 달라질 수 있도록 멈춘 곳의 재질을 받아 둔다.
 	QueryParams.bReturnPhysicalMaterial = true;
-	QueryParams.AddIgnoredActor(Context.SourceActor);
-	if (const UActorComponent* SourceComponent =
-		Cast<UActorComponent>(Context.SourceObject))
-	{
-		QueryParams.AddIgnoredActor(SourceComponent->GetOwner());
-	}
+	PDTargetingCollision::AddIgnoredSourceActors(
+		QueryParams, *Context.SourceActor, Context.SourceObject);
 
 	FVector Start;
 	FVector End;

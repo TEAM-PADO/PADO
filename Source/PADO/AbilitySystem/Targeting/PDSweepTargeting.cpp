@@ -5,32 +5,10 @@
 #include "Components/ActorComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 
 namespace PDSweepTargeting
 {
-	void AddIgnoredSourceActors(
-		FCollisionQueryParams& QueryParams,
-		const AActor& SourceActor,
-		const UObject* SourceObject)
-	{
-		QueryParams.AddIgnoredActor(&SourceActor);
-
-		const AActor* SourceObjectActor = Cast<AActor>(SourceObject);
-		if (!SourceObjectActor)
-		{
-			const UActorComponent* SourceComponent =
-				Cast<UActorComponent>(SourceObject);
-			SourceObjectActor = SourceComponent
-				? SourceComponent->GetOwner()
-				: nullptr;
-		}
-
-		if (SourceObjectActor && SourceObjectActor != &SourceActor)
-		{
-			QueryParams.AddIgnoredActor(SourceObjectActor);
-		}
-	}
-
 	bool IsOwnedOrAttachedTo(
 		const AActor& Candidate,
 		const AActor& PossibleParent)
@@ -157,7 +135,7 @@ void UPDSweepTargeting::GatherTargets(
 		: FCollisionShape::MakeSphere(SweepRadius);
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PDSweepTargeting), false);
-	PDSweepTargeting::AddIgnoredSourceActors(
+	PDTargetingCollision::AddIgnoredSourceActors(
 		QueryParams,
 		*SourceActor,
 		Context.SourceObject);
@@ -314,7 +292,7 @@ bool UPDSweepTargeting::IsPathUnobstructed(
 	const FVector End = TargetActor.GetActorLocation();
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PDSweepObstruction), false);
-	PDSweepTargeting::AddIgnoredSourceActors(
+	PDTargetingCollision::AddIgnoredSourceActors(
 		QueryParams,
 		*SourceActor,
 		Context.SourceObject);

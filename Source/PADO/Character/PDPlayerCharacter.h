@@ -87,7 +87,7 @@ public:
 	virtual void StopSprinting_Implementation();
 
 	/**
-	 * 시선 앞의 상호작용 대상과 상호작용한다.
+	 * 시선 앞의 상호작용 대상과 상호작용한다. 탈것에 타고 있으면 내린다.
 	 * 무엇을 할지는 대상이 정한다. 아이템이면 줍고, 이미 들고 있으면 대상이 거부한다.
 	 */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "PADO|Input")

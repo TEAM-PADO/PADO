@@ -11,6 +11,7 @@
 #include "Net/UnrealNetwork.h"
 #include "PADO/AbilitySystem/Fragment/PDActionExecutionContext.h"
 #include "PADO/AbilitySystem/Fragment/PDActionFragment.h"
+#include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDActionProjectile, Log, All);
@@ -258,7 +259,8 @@ void APDActionProjectile::HandleBlockingHit(
 	const FHitResult& Hit)
 {
 	if (!HasAuthority() || bHasDetonated ||
-		OtherActor == IgnoredSourceActor.Get())
+		OtherActor == IgnoredSourceActor.Get() ||
+		OtherActor == IgnoredSourceVehicle.Get())
 	{
 		return;
 	}
@@ -579,11 +581,16 @@ void APDActionProjectile::ClearSourceMovementIgnore()
 	{
 		CollisionComponent->IgnoreActorWhenMoving(SourceActor, false);
 	}
+	if (AActor* SourceVehicle = IgnoredSourceVehicle.Get())
+	{
+		CollisionComponent->IgnoreActorWhenMoving(SourceVehicle, false);
+	}
 	if (APawn* SourcePawn = IgnoredSourcePawn.Get())
 	{
 		SourcePawn->MoveIgnoreActorRemove(this);
 	}
 	IgnoredSourcePawn.Reset();
+	IgnoredSourceVehicle.Reset();
 	IgnoredSourceActor.Reset();
 }
 
@@ -610,6 +617,13 @@ void APDActionProjectile::RefreshSourceMovementIgnore(
 	{
 		// 투사체 Sweep와 투척자 이동 Sweep 양쪽에서 서로를 무시한다.
 		SourcePawn->MoveIgnoreActorAdd(this);
+	}
+
+	// 탄 채로 던지면 좌석을 감싼 차체 안에서 출발한다.
+	IgnoredSourceVehicle = PDTargetingCollision::FindSourceVehicle(*SourceActor);
+	if (AActor* SourceVehicle = IgnoredSourceVehicle.Get())
+	{
+		CollisionComponent->IgnoreActorWhenMoving(SourceVehicle, true);
 	}
 }
 
