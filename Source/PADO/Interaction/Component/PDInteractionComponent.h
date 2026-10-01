@@ -65,6 +65,9 @@ protected:
 	void ServerInteract(AActor* Target, UPrimitiveComponent* AimedComponent);
 
 private:
+	/** 상호작용하는 쪽이 살아 있는가. 빈사·사망이면 아무것과도 상호작용하지 않는다. */
+	bool IsOwnerAbleToInteract() const;
+
 	FPDInteractionContextStruct MakeContext(
 		UPrimitiveComponent* AimedComponent) const;
 	bool CanInteractWith(

@@ -20,8 +20,17 @@ PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Ability_Action);
  */
 PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_State_HandsBlocked);
 
+/** 빈사 상태다. 체력이 0이 됐지만 아직 죽지 않았다. 손을 쓸 수 없다. */
+PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_State_Downed);
+
+/** 사망 상태다. 피해를 더 받지 않는다. */
+PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_State_Dead);
+
 /** 공용 Action 쿨다운 GE가 지속시간을 받는 SetByCaller 태그다. */
 PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Data_Cooldown_Duration);
 
 /** 이동 속도 배율 GE가 배율을 받는 SetByCaller 태그다. */
 PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Data_MoveSpeed_Multiplier);
+
+/** 피해 GE가 피해량을 받는 SetByCaller 태그다. */
+PADO_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_PD_Data_Damage);

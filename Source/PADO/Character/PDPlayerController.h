@@ -11,6 +11,7 @@ class APDWheeledVehicle;
 class UChaosVehicleMovementComponent;
 class UInputAction;
 class UInputMappingContext;
+class UPDRespawnComponent;
 class UPDVehicleOccupantComponent;
 class UPDVehicleSeatComponent;
 struct FInputActionValue;
@@ -27,6 +28,11 @@ class PADO_API APDPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	explicit APDPlayerController(const FObjectInitializer& ObjectInitializer);
+
+	UFUNCTION(BlueprintPure, Category = "PADO|Respawn")
+	UPDRespawnComponent* GetRespawnComponent() const { return RespawnComponent; }
+
 	/** Broadcast before forwarding the interaction input to the character. */
 	UPROPERTY(BlueprintAssignable, Category = "PADO|Input")
 	FPDInputRequestedSignature OnInteractRequested;
@@ -243,6 +249,10 @@ private:
 	/** 좌석 순서대로 다음 빈 좌석으로 옮긴다. 게임패드처럼 번호 키가 없는 입력용이다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> VehicleNextSeatAction;
+
+	/** 죽으면 새 몸으로 다시 시작시킨다. 서버에서만 동작한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Respawn", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDRespawnComponent> RespawnComponent;
 
 	/** 이 머신의 플레이어가 조종 중인 차량이다. */
 	TWeakObjectPtr<APDWheeledVehicle> ControlledVehicle;

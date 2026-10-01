@@ -249,6 +249,8 @@ void UPDVehicleOccupantComponent::ApplySeated(UPDVehicleSeatComponent& Seat)
 	{
 		PlayerController->BeginVehicleView(Seat);
 	}
+
+	OnSeatChanged.Broadcast();
 }
 
 void UPDVehicleOccupantComponent::ApplyUnseated()
@@ -271,7 +273,14 @@ void UPDVehicleOccupantComponent::ApplyUnseated()
 		ETeleportType::TeleportPhysics);
 	Character->SetActorEnableCollision(true);
 
-	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+	// 죽은 몸은 다시 걷지 않는다. 래그돌이 이어받도록 차의 속도만 남긴다.
+	const APDCharacterBase* CharacterBase = Cast<APDCharacterBase>(Character);
+	UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
+	if (Movement && CharacterBase && CharacterBase->IsDead())
+	{
+		Movement->Velocity = State.ExitVelocity;
+	}
+	else if (Movement)
 	{
 		// 탑승 중에는 소유 클라이언트가 이동을 보내지 않는다. 그대로 두면 서버는 내리는
 		// 순간 앉아 있던 시간 전체를 늦은 클라이언트의 공백으로 보고 한꺼번에
@@ -312,6 +321,8 @@ void UPDVehicleOccupantComponent::ApplyUnseated()
 	{
 		PlayerController->EndVehicleView();
 	}
+
+	OnSeatChanged.Broadcast();
 }
 
 void UPDVehicleOccupantComponent::BlockHands()

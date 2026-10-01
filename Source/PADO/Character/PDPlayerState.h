@@ -9,6 +9,7 @@
 
 class UAbilitySystemComponent;
 class UPDAbilitySystemComponent;
+class UPDHealthAttributeSet;
 class UPDMovementAttributeSet;
 
 /**
@@ -43,6 +44,18 @@ public:
 		return MovementAttributes;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Health")
+	const UPDHealthAttributeSet* GetHealthAttributes() const
+	{
+		return HealthAttributes;
+	}
+
+	/**
+	 * 서버에서 새 몸으로 다시 시작할 때 부른다. 걸려 있던 Gameplay Effect(슬로우·헤이스트,
+	 * 쿨다운 등)를 모두 지우고 체력을 최대로 채운다.
+	 */
+	void ResetForRespawn();
+
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Ability", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDAbilitySystemComponent> AbilitySystemComponent;
@@ -53,4 +66,8 @@ private:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Movement", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDMovementAttributeSet> MovementAttributes;
+
+	/** 체력이다. 몸이 바뀌어도 플레이어 단위로 남는다. 새 몸의 체력을 채우는 것은 리스폰이 정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Health", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDHealthAttributeSet> HealthAttributes;
 };

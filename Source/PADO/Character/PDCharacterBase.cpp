@@ -7,6 +7,7 @@
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
+#include "PADO/Character/PDHealthComponent.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
@@ -24,6 +25,7 @@ APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
 		CreateDefaultSubobject<UPDInteractionComponent>(TEXT("Interaction"));
 	VehicleOccupantComponent =
 		CreateDefaultSubobject<UPDVehicleOccupantComponent>(TEXT("VehicleOccupant"));
+	HealthComponent = CreateDefaultSubobject<UPDHealthComponent>(TEXT("Health"));
 }
 
 UAbilitySystemComponent* APDCharacterBase::GetAbilitySystemComponent() const
@@ -39,6 +41,16 @@ UPDAbilitySystemComponent* APDCharacterBase::GetPDAbilitySystemComponent() const
 UPDCharacterMovementComponent* APDCharacterBase::GetPDCharacterMovement() const
 {
 	return Cast<UPDCharacterMovementComponent>(GetCharacterMovement());
+}
+
+bool APDCharacterBase::IsAlive() const
+{
+	return !HealthComponent || HealthComponent->IsAlive();
+}
+
+bool APDCharacterBase::IsDead() const
+{
+	return HealthComponent && HealthComponent->IsDead();
 }
 
 void APDCharacterBase::InterruptHandActions()
@@ -86,6 +98,10 @@ void APDCharacterBase::InitializeAbilitySystem(
 	}
 
 	InAbilitySystem->InitAbilityActorInfo(InOwnerActor, this);
+	if (HealthComponent)
+	{
+		HealthComponent->InitializeWithAbilitySystem(InAbilitySystem);
+	}
 
 	// 이 함수는 초기화 경계마다 불린다. 같은 ASC에 두 번 등록하지 않는다.
 	if (!MoveSpeedChangedHandle.IsValid())
@@ -109,6 +125,11 @@ void APDCharacterBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void APDCharacterBase::UninitializeAbilitySystem()
 {
+	if (HealthComponent)
+	{
+		HealthComponent->UninitializeFromAbilitySystem();
+	}
+
 	UPDAbilitySystemComponent* CurrentAbilitySystem = AbilitySystem.Get();
 	AbilitySystem.Reset();
 	if (!CurrentAbilitySystem)

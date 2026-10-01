@@ -10,6 +10,7 @@
 class UAbilitySystemComponent;
 class UPDAbilitySystemComponent;
 class UPDCharacterMovementComponent;
+class UPDHealthComponent;
 class UPDHeldItemComponent;
 class UPDInteractionComponent;
 class UPDKnockbackComponent;
@@ -73,6 +74,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
 	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
 
+	UFUNCTION(BlueprintPure, Category = "PADO|Health")
+	UPDHealthComponent* GetHealthComponent() const
+	{
+		return HealthComponent;
+	}
+
+	/** 살아 있는가. 빈사나 사망이면 false다. */
+	UFUNCTION(BlueprintPure, Category = "PADO|Health")
+	bool IsAlive() const;
+
+	UFUNCTION(BlueprintPure, Category = "PADO|Health")
+	bool IsDead() const;
+
 	/**
 	 * 손으로 하던 행동을 끊는다. 진행 중인 Action은 실행하지 않고 취소하고,
 	 * 누르고 있던 방아쇠를 놓고, 서버에서는 재장전을 취소한다. 서버와 이 몸을
@@ -108,6 +122,10 @@ private:
 	/** 탈것에 탄 상태다. 앉으면 몸을 좌석에 붙이고 이동과 충돌을 끈다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPDVehicleOccupantComponent> VehicleOccupantComponent;
+
+	/** 생명 상태다. 연결된 ASC의 체력을 보고 빈사·사망을 정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "PADO|Health", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPDHealthComponent> HealthComponent;
 
 	/** 연결된 ASC다. 이 몸이 소유하지 않을 수 있으므로 약참조로 둔다. */
 	TWeakObjectPtr<UPDAbilitySystemComponent> AbilitySystem;

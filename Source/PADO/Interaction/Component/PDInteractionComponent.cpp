@@ -19,7 +19,7 @@ bool UPDInteractionComponent::TryInteract()
 	AActor* Owner = GetOwner();
 	AActor* Target = nullptr;
 	UPrimitiveComponent* AimedComponent = nullptr;
-	if (!Owner || !FindInteractionTarget(Target, AimedComponent))
+	if (!Owner || !IsOwnerAbleToInteract() || !FindInteractionTarget(Target, AimedComponent))
 	{
 		return false;
 	}
@@ -45,7 +45,7 @@ bool UPDInteractionComponent::InteractWithTarget(
 	UPrimitiveComponent* AimedComponent)
 {
 	const AActor* Owner = GetOwner();
-	if (!Owner || !Owner->HasAuthority() || !IsValid(Target))
+	if (!Owner || !Owner->HasAuthority() || !IsValid(Target) || !IsOwnerAbleToInteract())
 	{
 		return false;
 	}
@@ -241,4 +241,11 @@ float UPDInteractionComponent::GetDistanceToComponent(
 	return Distance >= 0.0f
 		? Distance
 		: FVector::Dist(Origin, Component.GetComponentLocation());
+}
+
+bool UPDInteractionComponent::IsOwnerAbleToInteract() const
+{
+	// 빈사·사망한 몸은 줍거나 타지 않는다. 쓰러지기 직전에 보낸 요청이 늦게 도착해도 거부한다.
+	const APDCharacterBase* Character = Cast<APDCharacterBase>(GetOwner());
+	return !Character || Character->IsAlive();
 }

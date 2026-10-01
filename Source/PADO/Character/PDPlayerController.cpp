@@ -11,11 +11,19 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+#include "PADO/Character/PDRespawnComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleSeatComponent.h"
 #include "PADO/Vehicle/PDWheeledVehicle.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDPlayerController, Log, All);
+
+APDPlayerController::APDPlayerController(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// 서브오브젝트 이름은 파생 Blueprint에 저장된 컴포넌트 값의 키다. 바꾸지 않는다.
+	RespawnComponent = CreateDefaultSubobject<UPDRespawnComponent>(TEXT("Respawn"));
+}
 
 void APDPlayerController::SetupInputComponent()
 {

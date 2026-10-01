@@ -18,6 +18,7 @@
 #include "PADO/AbilitySystem/Ability/PDGA_ChannelAction.h"
 #include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/AbilitySystem/Effect/PDGE_Damage.h"
 #include "PADO/AbilitySystem/Fragment/PDActionFragment.h"
 #include "PADO/AbilitySystem/Fragment/PDThrowProjectileFragment.h"
 #include "PADO/AbilitySystem/Projectile/PDActionProjectile.h"
@@ -27,6 +28,7 @@
 #include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
 #include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
+#include "PADO/Character/PDHealthComponent.h"
 #include "PADO/Character/PDPlayerCharacter.h"
 #include "PADO/Character/PDPlayerController.h"
 #include "PADO/Character/PDPlayerState.h"
@@ -38,6 +40,7 @@
 #include "PADO/Item/Tag/PDItemGameplayTags.h"
 #include "PADO/Item/Trait/PDItemMagazineTrait.h"
 #include "PADO/Tests/PDCharacterTestUtils.h"
+#include "PADO/Tests/PDItemTestUtils.h"
 #include "PADO/Tests/PDTestWorldUtils.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupancyComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
@@ -147,40 +150,9 @@ namespace PDVehicleSystemTests
 		}
 	};
 
-	/**
-	 * 손에 드는 아이템 정의다. 탄창 크기가 0보다 크면 몽타주 없는 탄창을 넣어
-	 * 재장전이 즉시 끝나게 한다. 테스트 World의 몸은 몽타주를 재생할 수 없다.
-	 */
-	UPDItemDefinition* MakeHeldItemDefinition(
-		UObject* Outer,
-		int32 MagazineCapacity,
-		UPDAbilityDefinition* UseAction = nullptr)
-	{
-		UPDItemDefinition* Definition = NewObject<UPDItemDefinition>(Outer);
-		Definition->ItemId = TAG_PD_Item_Id_Weapon_SniperRifle;
-		Definition->DisplayName = FText::FromString(TEXT("Automation Vehicle Item"));
-		Definition->Presentation.StaticMesh = NewObject<UStaticMesh>(Definition);
-		Definition->Presentation.bSimulatePhysicsInWorld = false;
-		if (MagazineCapacity > 0)
-		{
-			UPDItemMagazineTrait* MagazineTrait = NewObject<UPDItemMagazineTrait>(Definition);
-			MagazineTrait->Capacity = MagazineCapacity;
-			Definition->Traits.Add(MagazineTrait);
-		}
-		Definition->UseAction = UseAction;
-		return Definition;
-	}
-
-	APDWorldItemActor* SpawnHeldItem(UWorld& World, UPDItemDefinition& Definition)
-	{
-		APDWorldItemActor* Item = World.SpawnActor<APDWorldItemActor>();
-		if (!Item || !Item->InitializeItem(&Definition))
-		{
-			return nullptr;
-		}
-		Item->DispatchBeginPlay();
-		return Item;
-	}
+	// 손 아이템 준비는 피해 테스트와 공유한다.
+	using PDItemTestUtils::MakeHeldItemDefinition;
+	using PDItemTestUtils::SpawnHeldItem;
 
 	/** 지금 활성인 Action 수다. 무기를 든 동안 활성인 Fire Action은 세지 않는다. */
 	int32 CountActiveActions(const UAbilitySystemComponent& AbilitySystem)
@@ -1220,6 +1192,54 @@ bool FPDVehicleDriverlessNeutralInputTest::RunTest(const FString& Parameters)
 
 		TestTrue(TEXT("운전석에서 내린다."), Rig.Occupancy->TryExit(Rider));
 		TestTrue(TEXT("내리면 중립 입력이다."), Movement->IsDriverless());
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleOccupantDiesTest,
+	"PADO.Vehicle.Occupancy.DiesWhileSeated",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleOccupantDiesTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APlayerController* Controller = nullptr;
+	APDPlayerCharacter* Driver =
+		Rig.SpawnPossessedRider(FVector(50.0f, -300.0f, 0.0f), Controller);
+	UAbilitySystemComponent* AbilitySystem = Driver ? Driver->GetAbilitySystemComponent() : nullptr;
+	if (TestNotNull(TEXT("운전자를 준비한다."), Driver) &&
+		TestNotNull(TEXT("운전자의 ASC가 있다."), AbilitySystem) &&
+		TestTrue(TEXT("운전석에 탄다."), Rig.Occupancy->TryEnter(Driver, Rig.DriverSeat)))
+	{
+		const FGameplayEffectSpecHandle Spec = AbilitySystem->MakeOutgoingSpec(
+			UPDGE_Damage::StaticClass(),
+			1.0f,
+			AbilitySystem->MakeEffectContext());
+		Spec.Data->SetSetByCallerMagnitude(TAG_PD_Data_Damage, 100.0f);
+		AbilitySystem->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+
+		TestTrue(TEXT("탄 채로 죽는다."), Driver->IsDead());
+		TestFalse(TEXT("죽은 몸은 좌석에 남지 않는다."),
+			Driver->GetVehicleOccupantComponent()->IsSeated());
+		TestNull(TEXT("좌석이 빈다."), Rig.Occupancy->GetSeatOccupant(Rig.DriverSeat));
+		TestNull(TEXT("운전자가 죽으면 조종 권한을 거둔다."), Rig.Vehicle->GetVehicleController());
+		TestNull(TEXT("몸이 좌석에서 떨어진다."), Driver->GetRootComponent()->GetAttachParent());
+		TestEqual(TEXT("내린 죽은 몸은 다시 걷지 않는다."),
+			static_cast<int32>(Driver->GetCharacterMovement()->MovementMode.GetValue()),
+			static_cast<int32>(MOVE_None));
+		TestEqual(TEXT("손 사용 불가 태그는 탑승이 뗀 뒤 사망이 붙인 하나만 남는다."),
+			AbilitySystem->GetTagCount(TAG_PD_State_HandsBlocked),
+			1);
 	}
 
 	Rig.TearDown();

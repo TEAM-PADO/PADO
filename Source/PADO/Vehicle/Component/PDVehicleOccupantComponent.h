@@ -77,6 +77,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PD|Vehicle")
 	bool RequestSwitchToNextSeat();
 
+	/**
+	 * 이 머신에 탑승 상태가 적용될 때마다 발생한다(앉음, 좌석 이동, 내림). 사망한 몸이
+	 * 내린 뒤에 래그돌이 되는 것처럼 좌석 상태를 기다리는 쪽이 받는다.
+	 */
+	FSimpleMulticastDelegate OnSeatChanged;
+
 	/** 서버에서 좌석 구성 컴포넌트가 부른다. 앉히거나 다른 좌석으로 옮긴다. */
 	void EnterSeat(UPDVehicleSeatComponent* Seat);
 
