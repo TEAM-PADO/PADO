@@ -36,7 +36,17 @@ public class PADO : ModuleRules
 			"UMG",
 			"CommonUI",
 			"CommonInput",
-			"ModelViewViewModel"
+			"ModelViewViewModel",
+			
+			// Mass
+			"MassCore",
+			"MassEntity",
+			"MassCommon",
+			"MassMovement",
+			"MassSpawner",
+			"MassAIBehavior",
+			"MassSignals",
+			"StateTreeModule",
 		});
 
 		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
