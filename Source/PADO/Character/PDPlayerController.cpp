@@ -106,6 +106,16 @@ void APDPlayerController::SetupInputComponent()
 	{
 		EnhancedInputComponent->BindAction(VehicleExitAction, ETriggerEvent::Started, this, &ThisClass::HandleVehicleExit);
 	}
+
+	if (VehicleSeatSelectAction)
+	{
+		EnhancedInputComponent->BindAction(VehicleSeatSelectAction, ETriggerEvent::Started, this, &ThisClass::HandleVehicleSeatSelect);
+	}
+
+	if (VehicleNextSeatAction)
+	{
+		EnhancedInputComponent->BindAction(VehicleNextSeatAction, ETriggerEvent::Started, this, &ThisClass::HandleVehicleNextSeat);
+	}
 }
 
 void APDPlayerController::PlayerTick(float DeltaTime)
@@ -168,21 +178,22 @@ APDWheeledVehicle* APDPlayerController::GetControlledVehicle() const
 void APDPlayerController::BeginVehicleView(const UPDVehicleSeatComponent& Seat)
 {
 	AActor* Vehicle = Seat.GetOwner();
-	if (!IsLocalController() || !Vehicle || ViewedVehicle.Get() == Vehicle)
+	if (!IsLocalController() || !Vehicle)
 	{
 		return;
 	}
 
-	ViewedVehicle = Vehicle;
-	SetViewTargetWithBlend(Vehicle, VehicleCameraBlendTime);
-
-	// 좌석으로 옮기기 전에 방아쇠를 놓는다. 매핑을 바꾸는 순간 해제 이벤트가
-	// 온다는 보장이 없고, Fire Action은 방아쇠가 눌린 동안 계속 쏜다.
-	if (APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter())
+	// 같은 탈것 안에서 좌석을 옮겼다. 시점은 그대로 둔다.
+	if (ViewedVehicle.Get() == Vehicle)
 	{
-		ControlledCharacter->StopAttacking();
+		RefreshSeatMappingContext(Seat);
+		return;
 	}
 
+	// 진행 중이던 손 행동은 탑승 상태가 몸에 적용될 때 이미 끊었다
+	// (APDCharacterBase::InterruptHandActions).
+	ViewedVehicle = Vehicle;
+	SetViewTargetWithBlend(Vehicle, VehicleCameraBlendTime);
 	AddSeatMappingContext(Seat);
 }
 
@@ -215,9 +226,7 @@ void APDPlayerController::AddSeatMappingContext(const UPDVehicleSeatComponent& S
 	}
 
 	const bool bDriverSeat = Seat.IsDriverSeat();
-	UInputMappingContext* SeatMappingContext = bDriverSeat
-		? VehicleDriverMappingContext
-		: VehiclePassengerMappingContext;
+	UInputMappingContext* SeatMappingContext = GetSeatMappingContext(Seat);
 	if (!SeatMappingContext)
 	{
 		// 매핑을 다 빼 버리면 내릴 입력도 없어진다. 캐릭터 입력을 그대로 둔다.
@@ -270,6 +279,35 @@ bool APDPlayerController::RemoveSeatMappingContext()
 
 	AddedSeatMappingContext = nullptr;
 	return true;
+}
+
+void APDPlayerController::RefreshSeatMappingContext(const UPDVehicleSeatComponent& Seat)
+{
+	if (AddedSeatMappingContext == GetSeatMappingContext(Seat))
+	{
+		return;
+	}
+
+	// 바꾸는 동안 누르고 있던 키는 뗄 때까지 무시되므로 좌석 키가 반복되지 않는다.
+	if (RemoveSeatMappingContext())
+	{
+		AddDefaultMappingContext();
+	}
+	AddSeatMappingContext(Seat);
+}
+
+UInputMappingContext* APDPlayerController::GetSeatMappingContext(
+	const UPDVehicleSeatComponent& Seat) const
+{
+	return Seat.IsDriverSeat()
+		? VehicleDriverMappingContext
+		: VehiclePassengerMappingContext;
+}
+
+UPDVehicleOccupantComponent* APDPlayerController::GetVehicleOccupant() const
+{
+	const APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter();
+	return ControlledCharacter ? ControlledCharacter->GetVehicleOccupantComponent() : nullptr;
 }
 
 UChaosVehicleMovementComponent* APDPlayerController::GetControlledVehicleMovement() const
@@ -511,11 +549,24 @@ void APDPlayerController::HandleVehicleHandbrakeCompleted()
 
 void APDPlayerController::HandleVehicleExit()
 {
-	APDPlayerCharacter* ControlledCharacter = GetPDPlayerCharacter();
-	if (UPDVehicleOccupantComponent* Occupant = ControlledCharacter
-		? ControlledCharacter->GetVehicleOccupantComponent()
-		: nullptr)
+	if (UPDVehicleOccupantComponent* Occupant = GetVehicleOccupant())
 	{
 		Occupant->RequestExit();
+	}
+}
+
+void APDPlayerController::HandleVehicleSeatSelect(const FInputActionValue& Value)
+{
+	if (UPDVehicleOccupantComponent* Occupant = GetVehicleOccupant())
+	{
+		Occupant->RequestSwitchSeat(FMath::RoundToInt(Value.Get<float>()));
+	}
+}
+
+void APDPlayerController::HandleVehicleNextSeat()
+{
+	if (UPDVehicleOccupantComponent* Occupant = GetVehicleOccupant())
+	{
+		Occupant->RequestSwitchToNextSeat();
 	}
 }

@@ -71,8 +71,8 @@ protected:
 
 private:
 	/**
-	 * 입력을 누가 만드는지 정한다. 운전자가 없으면 서버가 정지 입력을 만들고,
-	 * 운전자가 있으면 그 머신이 만든다.
+	 * 입력을 누가 만드는지 정한다. 운전자가 없으면 서버가 중립 입력을 만들어 차가
+	 * 관성으로 굴러가다 서고, 운전자가 있으면 그 머신이 만든다.
 	 */
 	void ApplyServerInputOwnership(bool bServerProducesInput);
 

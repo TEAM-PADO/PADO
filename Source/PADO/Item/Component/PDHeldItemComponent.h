@@ -51,7 +51,7 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool TryPickUp(APDWorldItemActor* Item);
 
-	/** 지금 이 아이템을 집을 수 있는 상태인지다. 한 번에 하나만 든다. */
+	/** 지금 이 아이템을 집을 수 있는 상태인지다. 한 번에 하나만 들고, 손을 쓸 수 없으면 집지 않는다. */
 	UFUNCTION(BlueprintPure, Category = "PD|Item")
 	bool CanPickUpItem(const APDWorldItemActor* Item) const;
 
@@ -85,6 +85,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "PD|Item")
 	bool TryReloadHeldItem();
+
+	/** 서버에서 현재 Held Item의 재장전을 취소한다. 진행 중이던 재장전이 있었으면 true다. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
+	bool CancelHeldItemReload();
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool UseHeldItemWithTarget(AActor* TargetActor);
@@ -174,6 +178,12 @@ private:
 	bool ClearHeldItemForDestruction(APDWorldItemActor* Item);
 	bool ReloadHeldItemAuthority();
 	void BroadcastHeldItemChanged();
+
+	/**
+	 * Holder가 손을 쓸 수 없는 상태인가(State.HandsBlocked). 입력에서 온 재장전,
+	 * 드롭, 줍기를 거부한다. 탑승 직전에 보낸 요청이 앉은 뒤에 도착해도 손을 쓰지 않게 한다.
+	 */
+	bool AreHandsBlocked() const;
 
 	UPROPERTY(ReplicatedUsing = OnRep_HeldItem)
 	TObjectPtr<APDWorldItemActor> HeldItem;

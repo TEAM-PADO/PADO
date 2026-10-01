@@ -2,6 +2,7 @@
 
 #include "CollisionQueryParams.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
 #include "Net/UnrealNetwork.h"
@@ -14,6 +15,12 @@ namespace PDVehicleOccupancy
 {
 	/** 모든 하차 지점이 막혔을 때 탈것 위로 내릴 여유 높이다. */
 	constexpr float AboveVehicleMargin = 20.0f;
+
+	/**
+	 * 이보다 느리면 멈춘 차로 보고 속도를 넘기지 않는다(cm/s). 서 있는 차체의
+	 * 미세한 떨림이 내린 몸을 낙하 상태로 만들지 않게 한다.
+	 */
+	constexpr float MinInheritedExitSpeed = 10.0f;
 }
 
 UPDVehicleOccupancyComponent::UPDVehicleOccupancyComponent()
@@ -57,19 +64,7 @@ bool UPDVehicleOccupancyComponent::TryEnter(
 			continue;
 		}
 
-		UPDVehicleSeatComponent* Seat = Seats[SeatIndex];
-		SeatOccupants[SeatIndex] = Character;
-		Occupant->EnterSeat(Seat);
-
-		if (Seat->IsDriverSeat())
-		{
-			if (IPDControllableVehicle* Controllable = Cast<IPDControllableVehicle>(Vehicle))
-			{
-				Controllable->SetVehicleController(Character->GetController());
-			}
-		}
-
-		Vehicle->ForceNetUpdate();
+		OccupySeat(SeatIndex, *Character);
 		return true;
 	}
 
@@ -90,9 +85,64 @@ bool UPDVehicleOccupancyComponent::TryExit(APDCharacterBase* Character)
 	// 하차 지점은 좌석을 비우기 전에 고른다. 다른 탑승자의 하차 지점도 후보라서
 	// 좌석 순서를 그대로 쓴다.
 	const FVector ExitLocation = ResolveExitLocation(*Character, SeatIndex);
+	const FVector ExitVelocity = ResolveExitVelocity(SeatIndex);
 	ClearSeat(SeatIndex);
-	Occupant->ExitSeat(ExitLocation);
+	Occupant->ExitSeat(ExitLocation, ExitVelocity);
 	return true;
+}
+
+bool UPDVehicleOccupancyComponent::TrySwitchSeat(
+	APDCharacterBase* Character,
+	UPDVehicleSeatComponent* TargetSeat)
+{
+	const AActor* Vehicle = GetOwner();
+	const int32 CurrentIndex = FindSeatIndex(Character);
+	const int32 TargetIndex = TargetSeat ? GetSeats().IndexOfByKey(TargetSeat) : INDEX_NONE;
+	if (!Vehicle || !Vehicle->HasAuthority() || CurrentIndex == INDEX_NONE ||
+		!SeatOccupants.IsValidIndex(TargetIndex) || TargetIndex == CurrentIndex ||
+		IsValid(SeatOccupants[TargetIndex]))
+	{
+		return false;
+	}
+
+	// 조종석을 비우는 쪽을 먼저 처리한다. 조종석으로 옮기면 그다음에 권한을 넘긴다.
+	ClearSeat(CurrentIndex);
+	OccupySeat(TargetIndex, *Character);
+	return true;
+}
+
+UPDVehicleSeatComponent* UPDVehicleOccupancyComponent::FindSeatByNumber(
+	int32 SeatNumber) const
+{
+	for (UPDVehicleSeatComponent* Seat : GetSeats())
+	{
+		if (Seat->GetSeatNumber() == SeatNumber)
+		{
+			return Seat;
+		}
+	}
+	return nullptr;
+}
+
+UPDVehicleSeatComponent* UPDVehicleOccupancyComponent::FindNextFreeSeat(
+	const APDCharacterBase* Character) const
+{
+	const TArray<TObjectPtr<UPDVehicleSeatComponent>>& Seats = GetSeats();
+	const int32 CurrentIndex = FindSeatIndex(Character);
+	if (CurrentIndex == INDEX_NONE)
+	{
+		return nullptr;
+	}
+
+	for (int32 Offset = 1; Offset < Seats.Num(); ++Offset)
+	{
+		const int32 SeatIndex = (CurrentIndex + Offset) % Seats.Num();
+		if (!SeatOccupants.IsValidIndex(SeatIndex) || !IsValid(SeatOccupants[SeatIndex]))
+		{
+			return Seats[SeatIndex];
+		}
+	}
+	return nullptr;
 }
 
 void UPDVehicleOccupancyComponent::ReleaseOccupant(APDCharacterBase* Character)
@@ -206,6 +256,32 @@ int32 UPDVehicleOccupancyComponent::FindSeatIndex(const APDCharacterBase* Charac
 	return Character ? SeatOccupants.IndexOfByKey(Character) : INDEX_NONE;
 }
 
+void UPDVehicleOccupancyComponent::OccupySeat(int32 SeatIndex, APDCharacterBase& Character)
+{
+	AActor* Vehicle = GetOwner();
+	const TArray<TObjectPtr<UPDVehicleSeatComponent>>& Seats = GetSeats();
+	UPDVehicleOccupantComponent* Occupant = Character.GetVehicleOccupantComponent();
+	if (!Vehicle || !Occupant || !SeatOccupants.IsValidIndex(SeatIndex) ||
+		!Seats.IsValidIndex(SeatIndex))
+	{
+		return;
+	}
+
+	UPDVehicleSeatComponent* Seat = Seats[SeatIndex];
+	SeatOccupants[SeatIndex] = &Character;
+	Occupant->EnterSeat(Seat);
+
+	if (Seat->IsDriverSeat())
+	{
+		if (IPDControllableVehicle* Controllable = Cast<IPDControllableVehicle>(Vehicle))
+		{
+			Controllable->SetVehicleController(Character.GetController());
+		}
+	}
+
+	Vehicle->ForceNetUpdate();
+}
+
 void UPDVehicleOccupancyComponent::ClearSeat(int32 SeatIndex)
 {
 	AActor* Vehicle = GetOwner();
@@ -255,6 +331,25 @@ FVector UPDVehicleOccupancyComponent::ResolveExitLocation(
 		Center.X,
 		Center.Y,
 		Top + HalfHeight + PDVehicleOccupancy::AboveVehicleMargin);
+}
+
+FVector UPDVehicleOccupancyComponent::ResolveExitVelocity(int32 SeatIndex) const
+{
+	const AActor* Vehicle = GetOwner();
+	const TArray<TObjectPtr<UPDVehicleSeatComponent>>& Seats = GetSeats();
+	if (!Vehicle || !Seats.IsValidIndex(SeatIndex))
+	{
+		return FVector::ZeroVector;
+	}
+
+	// 차체가 돌고 있으면 좌석 자리의 속도는 차체 중심의 속도와 다르다.
+	const UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Vehicle->GetRootComponent());
+	const FVector Velocity = Body && Body->IsSimulatingPhysics()
+		? Body->GetPhysicsLinearVelocityAtPoint(Seats[SeatIndex]->GetComponentLocation())
+		: Vehicle->GetVelocity();
+	return Velocity.SizeSquared() < FMath::Square(PDVehicleOccupancy::MinInheritedExitSpeed)
+		? FVector::ZeroVector
+		: Velocity;
 }
 
 bool UPDVehicleOccupancyComponent::IsExitBlocked(

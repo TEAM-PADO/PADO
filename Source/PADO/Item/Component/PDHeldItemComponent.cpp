@@ -1,11 +1,14 @@
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
 #include "PADO/AbilitySystem/Ability/PDGA_Base.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
@@ -39,7 +42,7 @@ bool UPDHeldItemComponent::ConfigureAttachment(
 void UPDHeldItemComponent::TryDropHeldItem()
 {
 	AActor* Holder = GetOwner();
-	if (!Holder)
+	if (!Holder || AreHandsBlocked())
 	{
 		return;
 	}
@@ -101,7 +104,8 @@ bool UPDHeldItemComponent::CanPickUpItem(const APDWorldItemActor* Item) const
 	return GetOwner() &&
 		!IsValid(HeldItem) &&
 		IsValid(Item) &&
-		Item->CanBePickedUp();
+		Item->CanBePickedUp() &&
+		!AreHandsBlocked();
 }
 
 bool UPDHeldItemComponent::DropHeldItem(
@@ -240,7 +244,7 @@ float UPDHeldItemComponent::ResolveAutomaticFireInterval(
 bool UPDHeldItemComponent::TryReloadHeldItem()
 {
 	AActor* Holder = GetOwner();
-	if (!Holder || !HasHeldItem())
+	if (!Holder || !HasHeldItem() || AreHandsBlocked())
 	{
 		return false;
 	}
@@ -265,6 +269,16 @@ bool UPDHeldItemComponent::TryReloadHeldItem()
 
 	ServerReloadHeldItem();
 	return true;
+}
+
+bool UPDHeldItemComponent::CancelHeldItemReload()
+{
+	const AActor* Holder = GetOwner();
+	APDWorldItemActor* Item = GetHeldItem();
+	UPDWeaponMagazineComponent* Magazine =
+		Item ? Item->GetMagazineComponent() : nullptr;
+	return Holder && Holder->HasAuthority() && Magazine &&
+		Magazine->CancelReload();
 }
 
 bool UPDHeldItemComponent::UseHeldItemWithTarget(AActor* TargetActor)
@@ -360,12 +374,15 @@ void UPDHeldItemComponent::OnRep_HeldItem()
 
 void UPDHeldItemComponent::ServerDropHeldItem_Implementation()
 {
-	DropHeldItemUsingSettings(FVector::ZeroVector);
+	if (!AreHandsBlocked())
+	{
+		DropHeldItemUsingSettings(FVector::ZeroVector);
+	}
 }
 
 void UPDHeldItemComponent::ServerReloadHeldItem_Implementation()
 {
-	if (!ReloadHeldItemAuthority())
+	if (AreHandsBlocked() || !ReloadHeldItemAuthority())
 	{
 		ClientRejectReload();
 	}
@@ -499,4 +516,12 @@ bool UPDHeldItemComponent::ReloadHeldItemAuthority()
 void UPDHeldItemComponent::BroadcastHeldItemChanged()
 {
 	OnHeldItemChanged.Broadcast(HeldItem);
+}
+
+bool UPDHeldItemComponent::AreHandsBlocked() const
+{
+	const UAbilitySystemComponent* AbilitySystem =
+		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
+	return AbilitySystem &&
+		AbilitySystem->HasMatchingGameplayTag(TAG_PD_State_HandsBlocked);
 }

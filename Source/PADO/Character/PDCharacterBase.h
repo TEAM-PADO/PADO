@@ -73,6 +73,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PADO|Movement")
 	UPDCharacterMovementComponent* GetPDCharacterMovement() const;
 
+	/**
+	 * 손으로 하던 행동을 끊는다. 진행 중인 Action은 실행하지 않고 취소하고,
+	 * 누르고 있던 방아쇠를 놓고, 서버에서는 재장전을 취소한다. 서버와 이 몸을
+	 * 조종하는 머신에서 부른다.
+	 *
+	 * 무기를 든 동안 활성인 Fire Action은 취소되지 않고 방아쇠만 놓인다.
+	 */
+	void InterruptHandActions();
+
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

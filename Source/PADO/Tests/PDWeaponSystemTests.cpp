@@ -129,26 +129,8 @@ namespace PDWeaponSystemTests
 	using PDTestWorldUtils::CreateInitializedTestWorld;
 	using PDTestWorldUtils::DestroyTestWorld;
 
-	bool ConfigureHolderSocket(APDPlayerCharacter* Holder)
-	{
-		if (!Holder)
-		{
-			return false;
-		}
-
-		UStaticMesh* HandMeshAsset = NewObject<UStaticMesh>(Holder);
-		UStaticMeshSocket* HandSocket = NewObject<UStaticMeshSocket>(HandMeshAsset);
-		HandSocket->SocketName = TEXT("HandItem");
-		HandMeshAsset->Sockets.Add(HandSocket);
-
-		UStaticMeshComponent* HandMesh = NewObject<UStaticMeshComponent>(Holder);
-		HandMesh->SetupAttachment(Holder->GetRootComponent());
-		HandMesh->SetStaticMesh(HandMeshAsset);
-		HandMesh->RegisterComponent();
-		return Holder->GetHeldItemComponent()->ConfigureAttachment(
-			HandMesh,
-			TEXT("HandItem"));
-	}
+	// 손 소켓 구성은 탈것 테스트와 공유한다.
+	using PDCharacterTestUtils::ConfigureHolderSocket;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

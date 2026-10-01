@@ -11,6 +11,7 @@ class APDWheeledVehicle;
 class UChaosVehicleMovementComponent;
 class UInputAction;
 class UInputMappingContext;
+class UPDVehicleOccupantComponent;
 class UPDVehicleSeatComponent;
 struct FInputActionValue;
 
@@ -92,7 +93,8 @@ public:
 	 * 카메라로 넘어간다. 탈것 카메라는 머신마다 따로 돌므로 탑승자마다 시점이 따로 돈다.
 	 *
 	 * 탑승 중에는 손에 든 것을 쓰지 않는다. 캐릭터 입력(IMC_Player)을 빼고 좌석
-	 * 역할에 맞는 매핑만 넣는다.
+	 * 역할에 맞는 매핑만 넣는다. 같은 탈것 안에서 좌석을 옮기면 시점은 그대로 두고
+	 * 매핑만 새 좌석 역할에 맞춘다.
 	 */
 	void BeginVehicleView(const UPDVehicleSeatComponent& Seat);
 
@@ -125,6 +127,12 @@ private:
 
 	/** 넣어 둔 좌석 매핑을 뺀다. 뺀 것이 있으면 true다. */
 	bool RemoveSeatMappingContext();
+
+	/** 넣어 둔 좌석 매핑이 이 좌석 역할의 것이 아니면 바꾼다. */
+	void RefreshSeatMappingContext(const UPDVehicleSeatComponent& Seat);
+
+	UInputMappingContext* GetSeatMappingContext(const UPDVehicleSeatComponent& Seat) const;
+	UPDVehicleOccupantComponent* GetVehicleOccupant() const;
 	UChaosVehicleMovementComponent* GetControlledVehicleMovement() const;
 
 	APDPlayerCharacter* GetPDPlayerCharacter() const;
@@ -152,6 +160,8 @@ private:
 	void HandleVehicleHandbrakeStarted();
 	void HandleVehicleHandbrakeCompleted();
 	void HandleVehicleExit();
+	void HandleVehicleSeatSelect(const FInputActionValue& Value);
+	void HandleVehicleNextSeat();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;
@@ -222,6 +232,17 @@ private:
 	/** 탈것에서 내린다. 좌석 매핑에는 상호작용 입력이 없으므로 따로 둔다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> VehicleExitAction;
+
+	/**
+	 * Axis1D. 값이 옮겨 갈 좌석 번호다. 키마다 Scalar 수정자로 좌석 번호를 넣는다
+	 * (Ctrl+1이면 1, Ctrl+2면 2). 차 있거나 없는 좌석이면 서버가 거부한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> VehicleSeatSelectAction;
+
+	/** 좌석 순서대로 다음 빈 좌석으로 옮긴다. 게임패드처럼 번호 키가 없는 입력용이다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Vehicle", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> VehicleNextSeatAction;
 
 	/** 이 머신의 플레이어가 조종 중인 차량이다. */
 	TWeakObjectPtr<APDWheeledVehicle> ControlledVehicle;

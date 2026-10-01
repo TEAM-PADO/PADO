@@ -13,6 +13,7 @@
 #include "PADO/Vehicle/Component/PDVehicleOccupancyComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleSeatComponent.h"
+#include "PADO/Vehicle/Component/PDWheeledVehicleMovementComponent.h"
 #include "Physics/NetworkPhysicsComponent.h"
 
 namespace PDWheeledVehicleDefaults
@@ -22,7 +23,8 @@ namespace PDWheeledVehicleDefaults
 }
 
 APDWheeledVehicle::APDWheeledVehicle(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UPDWheeledVehicleMovementComponent>(
+		AWheeledVehiclePawn::VehicleMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -160,22 +162,13 @@ void APDWheeledVehicle::OnRep_VehicleController(AController* OldController)
 
 void APDWheeledVehicle::ApplyServerInputOwnership(bool bServerProducesInput)
 {
-	UChaosVehicleMovementComponent* Movement = GetVehicleMovementComponent();
-	if (!Movement)
+	// 엔진 차량은 로컬 PlayerController가 없으면 게임 스레드 입력을 물리에 넘기지
+	// 않고 마지막 입력을 쓴다. 데디케이티드 서버에는 로컬 PlayerController가 없으므로
+	// 운전자가 없으면 무브먼트가 물리 시뮬레이션에서 입력을 직접 비운다.
+	if (UPDWheeledVehicleMovementComponent* Movement =
+		Cast<UPDWheeledVehicleMovementComponent>(GetVehicleMovementComponent()))
 	{
-		return;
-	}
-
-	// 차량 무브먼트는 컨트롤러가 없으면 로컬 입력을 처리하지 않고 마지막 입력을
-	// 쥔 채로 남는다. 운전자가 없으면 서버가 컨트롤러 요구를 끄고 입력을 비워
-	// 멈추는 입력을 직접 만든다.
-	Movement->SetRequiresControllerForInputs(!bServerProducesInput);
-	if (bServerProducesInput)
-	{
-		Movement->SetThrottleInput(0.0f);
-		Movement->SetSteeringInput(0.0f);
-		Movement->SetBrakeInput(0.0f);
-		Movement->SetHandbrakeInput(false);
+		Movement->SetDriverless(bServerProducesInput);
 	}
 
 	// 네트워크 물리의 입력 생산자도 함께 넘긴다. 운전자가 있으면 그 머신이 만든다.

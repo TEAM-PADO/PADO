@@ -5,6 +5,7 @@
 #include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
+#include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
@@ -38,6 +39,26 @@ UPDAbilitySystemComponent* APDCharacterBase::GetPDAbilitySystemComponent() const
 UPDCharacterMovementComponent* APDCharacterBase::GetPDCharacterMovement() const
 {
 	return Cast<UPDCharacterMovementComponent>(GetCharacterMovement());
+}
+
+void APDCharacterBase::InterruptHandActions()
+{
+	// 취소가 먼저다. 방아쇠를 먼저 놓으면 놓는 순간 실행하는 Action(충전 투척)이
+	// 그대로 실행된다. 취소된 Action에 도착한 Release는 아무 일도 하지 않는다.
+	if (UPDAbilitySystemComponent* CurrentAbilitySystem = AbilitySystem.Get())
+	{
+		const FGameplayTagContainer ActionTags(TAG_PD_Ability_Action);
+		CurrentAbilitySystem->CancelAbilities(&ActionTags);
+	}
+
+	if (HeldItemComponent)
+	{
+		HeldItemComponent->ReleaseHeldItemUse();
+		if (HasAuthority())
+		{
+			HeldItemComponent->CancelHeldItemReload();
+		}
+	}
 }
 
 void APDCharacterBase::InitializeAbilitySystem(

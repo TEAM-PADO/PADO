@@ -3,10 +3,14 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "CoreMinimal.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshSocket.h"
 #include "Engine/World.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/Character/PDPlayerCharacter.h"
 #include "PADO/Character/PDPlayerState.h"
+#include "PADO/Item/Component/PDHeldItemComponent.h"
 
 namespace PDCharacterTestUtils
 {
@@ -58,6 +62,31 @@ namespace PDCharacterTestUtils
 			PlayerState->GetPDAbilitySystemComponent(),
 			PlayerState);
 		return Character;
+	}
+
+	/**
+	 * 손 소켓을 가진 메시를 붙여 아이템을 들 수 있게 한다. 테스트 캐릭터에는
+	 * 스켈레탈 메시 소켓이 없으므로 정적 메시 소켓으로 대신한다.
+	 */
+	inline bool ConfigureHolderSocket(APDPlayerCharacter* Holder)
+	{
+		if (!Holder)
+		{
+			return false;
+		}
+
+		UStaticMesh* HandMeshAsset = NewObject<UStaticMesh>(Holder);
+		UStaticMeshSocket* HandSocket = NewObject<UStaticMeshSocket>(HandMeshAsset);
+		HandSocket->SocketName = TEXT("HandItem");
+		HandMeshAsset->Sockets.Add(HandSocket);
+
+		UStaticMeshComponent* HandMesh = NewObject<UStaticMeshComponent>(Holder);
+		HandMesh->SetupAttachment(Holder->GetRootComponent());
+		HandMesh->SetStaticMesh(HandMeshAsset);
+		HandMesh->RegisterComponent();
+		return Holder->GetHeldItemComponent()->ConfigureAttachment(
+			HandMesh,
+			TEXT("HandItem"));
 	}
 }
 
