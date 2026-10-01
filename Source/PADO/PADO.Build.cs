@@ -21,17 +21,30 @@ public class PADO : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
+
+			// Network
+			"DeveloperSettings",
+			"ReusableSteamSessions",
+			"OnlineSubsystem",
+			"OnlineSubsystemUtils",
+			"CoreOnline",
 			
 			// GMS(Gameplay Message Router)
-			"GameplayMessageRuntime"
+			"GameplayMessageRuntime",
+
+			// UI(UMG, CommonUI, MVVM)
+			"UMG",
+			"CommonUI",
+			"CommonInput",
+			"ModelViewViewModel"
 		});
 
 		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
 		// ChaosVehicles: 바퀴형 탈것(APDWheeledVehicle)의 주행 물리와 예측이다.
 		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "PhysicsCore", "ChaosVehicles" });
 
-		// Uncomment if you are using Slate UI
-		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+		// UI 위젯 내부 구현용 Slate
+		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 		
 		// Uncomment if you are using online features
 		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
