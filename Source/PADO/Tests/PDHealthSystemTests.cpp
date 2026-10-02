@@ -282,6 +282,44 @@ bool FPDHealthDownedTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDHealthKillTest,
+	"PADO.Health.LifeState.Kill",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDHealthKillTest::RunTest(const FString& Parameters)
+{
+	using namespace PDHealthSystemTests;
+	FHealthRig Rig;
+	if (!TestTrue(TEXT("테스트 World를 만든다."), Rig.SetUp()))
+	{
+		return false;
+	}
+
+	APDPlayerCharacter* Healthy = Rig.SpawnPlayer(FVector(0.0f, 0.0f, 100.0f));
+	APDPlayerCharacter* Downed = Rig.SpawnPlayer(FVector(300.0f, 0.0f, 100.0f));
+	if (TestNotNull(TEXT("살아 있는 대상을 준비한다."), Healthy) &&
+		TestNotNull(TEXT("빈사가 될 대상을 준비한다."), Downed))
+	{
+		// 빈사를 켜 두어도 바로 사망한다. 타고 있던 탈것이 파괴될 때가 이 경우다.
+		SetDownedDuration(*Healthy->GetHealthComponent(), 5.0f);
+		TestTrue(TEXT("살아 있는 몸을 바로 사망시킨다."),
+			Healthy->GetHealthComponent()->Kill(nullptr, nullptr));
+		TestTrue(TEXT("빈사를 거치지 않는다."), Healthy->IsDead());
+		TestEqual(TEXT("체력도 0이 된다."), GetHealth(*Healthy->GetAbilitySystemComponent()), 0.0f);
+		TestFalse(TEXT("이미 죽은 몸은 다시 사망시키지 않는다."),
+			Healthy->GetHealthComponent()->Kill(nullptr, nullptr));
+
+		SetDownedDuration(*Downed->GetHealthComponent(), 5.0f);
+		ApplyDamage(*Downed->GetAbilitySystemComponent(), *Downed->GetAbilitySystemComponent(), 100.0f);
+		TestTrue(TEXT("빈사인 몸도 사망시킨다."), Downed->GetHealthComponent()->Kill(nullptr, nullptr));
+		TestTrue(TEXT("빈사에서 사망으로 넘어간다."), Downed->IsDead());
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPDHealthTagsClearedWhenBodyRemovedTest,
 	"PADO.Health.LifeState.TagsClearedWhenBodyRemoved",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

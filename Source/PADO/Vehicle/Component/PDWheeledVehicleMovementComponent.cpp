@@ -38,6 +38,21 @@ namespace PDWheeledVehicleMovement
 	};
 }
 
+UPDWheeledVehicleMovementComponent::UPDWheeledVehicleMovementComponent(
+	const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// 래그돌은 머신마다 따로 계산하는 연출이라 데디케이티드 서버에는 없다. 바퀴가 래그돌을
+	// 밟으면 그 머신의 차만 튀어 서버와 어긋난다. 떨어진 아이템·물리 소품도 같은 타입이라
+	// 함께 무시하고, 차체 충돌로만 부딪힌다. 차가 달릴 바닥은 물리 시뮬레이션을 켜지 않는다.
+	WheelTraceCollisionResponses.PhysicsBody = ECR_Ignore;
+
+	// 사람(캡슐, 메시)도 밟고 올라가지 않는다. 운전자 머신의 차는 예측으로 서버보다 앞서
+	// 사망이 도착하기 전의 피해자 위를 지나가는데, 바퀴가 그 캡슐을 밟으면 그 머신의 차만
+	// 크게 튄다(2026-10-02 MCP 측정). 사람은 들이받기 판정과 넉백으로만 다룬다.
+	WheelTraceCollisionResponses.Pawn = ECR_Ignore;
+}
+
 void UPDWheeledVehicleMovementComponent::SetDriverless(bool bInDriverless)
 {
 	bDriverless = bInDriverless;

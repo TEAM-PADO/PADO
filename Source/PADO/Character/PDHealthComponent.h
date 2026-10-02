@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Engine/NetSerialization.h"
 #include "GameplayTagContainer.h"
 #include "PADO/Character/Enum/PDLifeState.h"
 #include "PDHealthComponent.generated.h"
@@ -26,6 +27,13 @@ struct FPDLifeStateStruct
 	/** 이 상태로 만든 물리적 원인이다(아이템·투사체). */
 	UPROPERTY()
 	TObjectPtr<AActor> EffectCauser = nullptr;
+
+	/**
+	 * 쓰러지는 순간 받은 넉백 속도다(차에 치임 등). 서버가 기록하고, 사망한 몸의
+	 * 래그돌이 이어받는다. 없으면 0이고 래그돌은 그 머신의 이동 속도를 이어받는다.
+	 */
+	UPROPERTY()
+	FVector_NetQuantize10 ImpactVelocity = FVector::ZeroVector;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -75,6 +83,13 @@ public:
 	/** 서버에서 빈사인 몸을 살린다. 체력은 최대 체력의 ReviveHealthRatio만큼 채운다. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Health")
 	bool Revive();
+
+	/**
+	 * 서버에서 빈사를 거치지 않고 바로 사망시킨다. 체력도 0으로 둔다. 타고 있던 탈것이
+	 * 파괴될 때처럼 피해량과 상관없이 죽어야 할 때 쓴다. 이미 죽었으면 false다.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Health")
+	bool Kill(AActor* Instigator, AActor* EffectCauser);
 
 	/** 이 머신에 생명 상태가 적용될 때 발생한다. */
 	UPROPERTY(BlueprintAssignable, Category = "PD|Health")

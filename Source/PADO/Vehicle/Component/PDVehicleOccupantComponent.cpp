@@ -5,6 +5,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "PADO/AbilitySystem/Effect/PDGE_Damage.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/Character/PDCharacterBase.h"
 #include "PADO/Character/PDPlayerController.h"
@@ -120,6 +121,8 @@ void UPDVehicleOccupantComponent::EnterSeat(UPDVehicleSeatComponent* Seat)
 		return;
 	}
 
+	// 착지하기 전에 다시 타면 앞선 하차의 피해는 없다.
+	ClearExitDamage();
 	State.Seat = Seat;
 	ApplyState();
 	Owner->ForceNetUpdate();
@@ -135,9 +138,11 @@ void UPDVehicleOccupantComponent::ExitSeat(
 		return;
 	}
 
+	AActor* ExitedVehicle = GetCurrentVehicle();
 	State.Seat = nullptr;
 	State.ExitLocation = ExitLocation;
 	State.ExitVelocity = ExitVelocity;
+	ArmExitDamage(ExitVelocity, ExitedVehicle);
 	ApplyState();
 	Owner->ForceNetUpdate();
 }
@@ -155,6 +160,7 @@ void UPDVehicleOccupantComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 
 	// ASC는 몸보다 오래 살 수 있다. 붙여 둔 손 사용 불가 태그는 모든 머신에서 뗀다.
 	UnblockHands();
+	ClearExitDamage();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -353,4 +359,51 @@ void UPDVehicleOccupantComponent::UnblockHands()
 		AbilitySystem->RemoveLooseGameplayTag(TAG_PD_State_HandsBlocked);
 	}
 	HandsBlockedAbilitySystem.Reset();
+}
+
+void UPDVehicleOccupantComponent::HandleLanded(const FHitResult& Hit)
+{
+	const float Damage = PendingExitDamage;
+	AActor* Vehicle = PendingExitDamageCauser.Get();
+	ClearExitDamage();
+
+	// 착지 전에 빈사·사망했으면 하차 피해는 없다.
+	APDCharacterBase* Character = Cast<APDCharacterBase>(GetOwner());
+	UAbilitySystemComponent* AbilitySystem =
+		Character ? Character->GetAbilitySystemComponent() : nullptr;
+	if (Damage > 0.0f && AbilitySystem && Character->HasAuthority() && Character->IsAlive())
+	{
+		UPDGE_Damage::ApplyDamage(*AbilitySystem, *AbilitySystem, Damage, Vehicle);
+	}
+}
+
+void UPDVehicleOccupantComponent::ArmExitDamage(const FVector& ExitVelocity, AActor* Vehicle)
+{
+	ClearExitDamage();
+
+	APDCharacterBase* Character = Cast<APDCharacterBase>(GetOwner());
+	const float Damage = FMath::GetMappedRangeValueClamped(
+		FVector2f(ExitDamageMinSpeed, ExitDamageMaxSpeed),
+		FVector2f(0.0f, ExitDamageMax),
+		static_cast<float>(ExitVelocity.Size()));
+	if (!Character || !Character->HasAuthority() || !Character->IsAlive() || Damage <= 0.0f)
+	{
+		return;
+	}
+
+	// 피해는 내리는 순간이 아니라 땅에 닿을 때 준다. 서버도 소유 클라이언트의 이동을
+	// 시뮬레이션하며 착지를 처리한다.
+	PendingExitDamage = Damage;
+	PendingExitDamageCauser = Vehicle;
+	Character->LandedDelegate.AddUniqueDynamic(this, &UPDVehicleOccupantComponent::HandleLanded);
+}
+
+void UPDVehicleOccupantComponent::ClearExitDamage()
+{
+	PendingExitDamage = 0.0f;
+	PendingExitDamageCauser.Reset();
+	if (ACharacter* Character = GetOwnerCharacter())
+	{
+		Character->LandedDelegate.RemoveDynamic(this, &UPDVehicleOccupantComponent::HandleLanded);
+	}
 }

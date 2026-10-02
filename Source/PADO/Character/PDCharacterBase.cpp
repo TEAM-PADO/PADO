@@ -2,6 +2,7 @@
 
 #include "PDCharacterBase.h"
 
+#include "Components/CapsuleComponent.h"
 #include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
@@ -26,6 +27,15 @@ APDCharacterBase::APDCharacterBase(const FObjectInitializer& ObjectInitializer)
 	VehicleOccupantComponent =
 		CreateDefaultSubobject<UPDVehicleOccupantComponent>(TEXT("VehicleOccupant"));
 	HealthComponent = CreateDefaultSubobject<UPDHealthComponent>(TEXT("Health"));
+
+	// 캡슐은 쿼리와 Probe만 쓴다. 엔진 기본(물리 충돌 포함)이면 물리로 움직이는 차가
+	// 움직이지 않는 캡슐을 기둥처럼 들이받고 선다. Probe는 물리 반응 없이 접촉만
+	// 알리므로 차는 지나가고 들이받기는 그 접촉으로 판정한다. 걷다가 차나 벽에 막히는
+	// 이동과 총·근접 판정은 쿼리라서 그대로다.
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndProbe);
+	}
 }
 
 UAbilitySystemComponent* APDCharacterBase::GetAbilitySystemComponent() const

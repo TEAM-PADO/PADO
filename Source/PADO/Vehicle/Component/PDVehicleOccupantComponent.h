@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Engine/HitResult.h"
 #include "Engine/NetSerialization.h"
 #include "PDVehicleOccupantComponent.generated.h"
 
@@ -40,7 +41,8 @@ struct FPDVehicleOccupantStateStruct
  * 탈것에 타는 쪽의 컴포넌트다. 탑승 상태를 복제하고, 앉으면 몸을 좌석에 붙이고
  * 이동·충돌·컨트롤러 회전 추종을 끈다. 앉아 있는 동안 손을 쓸 수 없다
  * (State.HandsBlocked). 이 머신의 플레이어면 시점도 탈것 카메라로 넘긴다.
- * 내리면 되돌리고 탈것의 속도를 이어받는다.
+ * 내리면 되돌리고 탈것의 속도를 이어받는다. 빠르게 달리던 차에서 내렸으면 착지할 때
+ * 서버가 하차 속도에 비례한 피해를 준다.
  *
  * 탑승, 좌석 이동, 하차의 확정은 탈것의 UPDVehicleOccupancyComponent가 서버에서
  * 한다. 요청 RPC는 이 컴포넌트가 보낸다. 탈것은 클라이언트가 소유하지 않을 수 있다.
@@ -106,6 +108,22 @@ protected:
 	UFUNCTION()
 	void OnRep_State();
 
+	/** 서버에서 하차 뒤 착지했을 때 남아 있는 하차 피해를 준다. */
+	UFUNCTION()
+	void HandleLanded(const FHitResult& Hit);
+
+	/** 하차 속도가 이보다 빠르면 착지할 때 피해를 받는다. 기본 20km/h다. */
+	UPROPERTY(EditDefaultsOnly, Category = "PD|Vehicle|Exit Damage", meta = (ClampMin = "0.0", Units = "CentimetersPerSecond"))
+	float ExitDamageMinSpeed = 556.0f;
+
+	/** 이 하차 속도에서 피해가 ExitDamageMax에 이른다. 그 사이는 속도에 비례한다. 기본 80km/h다. */
+	UPROPERTY(EditDefaultsOnly, Category = "PD|Vehicle|Exit Damage", meta = (ClampMin = "0.0", Units = "CentimetersPerSecond"))
+	float ExitDamageMaxSpeed = 2222.0f;
+
+	/** 하차 피해 상한이다. 기본은 플레이어 최대 체력이다. */
+	UPROPERTY(EditDefaultsOnly, Category = "PD|Vehicle|Exit Damage", meta = (ClampMin = "0.0"))
+	float ExitDamageMax = 100.0f;
+
 private:
 	/**
 	 * 서버에서 요청을 확정한다. 권한이 없으면 아무것도 하지 않는다. RPC가 이
@@ -129,6 +147,10 @@ private:
 	void BlockHands();
 	void UnblockHands();
 
+	/** 서버에서 하차 속도로 피해를 정하고 착지를 기다린다. 살아 있지 않거나 느리면 하지 않는다. */
+	void ArmExitDamage(const FVector& ExitVelocity, AActor* Vehicle);
+	void ClearExitDamage();
+
 	UPROPERTY(ReplicatedUsing = OnRep_State)
 	FPDVehicleOccupantStateStruct State;
 
@@ -143,4 +165,10 @@ private:
 	 * 오래 산다. 몸이 탄 채로 사라져도 여기서 떼야 다음 몸이 손을 쓸 수 있다.
 	 */
 	TWeakObjectPtr<UAbilitySystemComponent> HandsBlockedAbilitySystem;
+
+	/** 착지하면 줄 하차 피해다. 서버에만 있다. 0이면 기다리지 않는다. */
+	float PendingExitDamage = 0.0f;
+
+	/** 하차 피해의 원인인 탈것이다. */
+	TWeakObjectPtr<AActor> PendingExitDamageCauser;
 };

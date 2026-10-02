@@ -15,6 +15,7 @@
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/PDWorldItemActor.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
+#include "PADO/Vehicle/PDVehicleContactSubsystem.h"
 #include "TimerManager.h"
 
 namespace PDHealth
@@ -83,6 +84,27 @@ bool UPDHealthComponent::Revive()
 		UPDHealthAttributeSet::GetHealthAttribute(),
 		Set->GetMaxHealth() * ReviveHealthRatio);
 	SetLifeState(EPDLifeState::Alive, nullptr, nullptr);
+	return true;
+}
+
+bool UPDHealthComponent::Kill(AActor* Instigator, AActor* EffectCauser)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || LifeState.State == EPDLifeState::Dead)
+	{
+		return false;
+	}
+
+	// 체력 표시가 살아 있는 값으로 남지 않게 한다. 피해 경로를 거치지 않으므로 다시 불리지 않는다.
+	if (UAbilitySystemComponent* CurrentAbilitySystem = AbilitySystem.Get();
+		CurrentAbilitySystem && HealthSet.IsValid())
+	{
+		CurrentAbilitySystem->SetNumericAttributeBase(
+			UPDHealthAttributeSet::GetHealthAttribute(),
+			0.0f);
+	}
+
+	SetLifeState(EPDLifeState::Dead, Instigator, EffectCauser);
 	return true;
 }
 
@@ -191,6 +213,13 @@ void UPDHealthComponent::SetLifeState(
 	LifeState.State = NewState;
 	LifeState.Instigator = Instigator;
 	LifeState.EffectCauser = EffectCauser;
+
+	// 쓰러뜨린 공격이 넉백을 걸었으면 그 속도를 함께 보낸다. 넉백은 서버 이동에 다음
+	// 틱에 반영되고 사망은 이동을 끄므로, 기록하지 않으면 어느 머신의 래그돌도 받지 못한다.
+	const ACharacter* Character = Cast<ACharacter>(Owner);
+	const UCharacterMovementComponent* Movement =
+		Character ? Character->GetCharacterMovement() : nullptr;
+	LifeState.ImpactVelocity = Movement ? Movement->PendingLaunchVelocity : FVector::ZeroVector;
 	Owner->ForceNetUpdate();
 
 	// 빈사 시간은 서버가 잰다.
@@ -325,11 +354,15 @@ void UPDHealthComponent::TryStartRagdoll()
 
 	bRagdollStarted = true;
 
-	// 쓰러지기 직전의 속도를 래그돌이 이어받는다. 달리던 차에서 내린 몸이면 차의 속도다.
-	FVector InheritedVelocity = FVector::ZeroVector;
+	// 쓰러지기 직전의 속도를 래그돌이 이어받는다. 쓰러뜨린 넉백이 있으면 그 속도이고,
+	// 없으면 이동 속도다. 달리던 차에서 내린 몸이면 차의 속도다.
+	FVector InheritedVelocity = LifeState.ImpactVelocity;
 	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
 	{
-		InheritedVelocity = Movement->Velocity;
+		if (InheritedVelocity.IsZero())
+		{
+			InheritedVelocity = Movement->Velocity;
+		}
 		Movement->StopMovementImmediately();
 		Movement->DisableMovement();
 		Movement->SetComponentTickEnabled(false);
@@ -353,6 +386,14 @@ void UPDHealthComponent::TryStartRagdoll()
 	Mesh->WakeAllRigidBodies();
 	Mesh->bBlendPhysics = true;
 	Mesh->SetAllPhysicsLinearVelocity(InheritedVelocity);
+
+	// 래그돌은 탈것에 밀리기만 하고 탈것을 밀지 못한다. 래그돌이 없는 서버의 차와 이
+	// 머신의 차가 어긋나지 않게 한다. 몸이 지워지면 물리 쪽에서 스스로 빠진다.
+	if (UPDVehicleContactSubsystem* VehicleContacts =
+		UWorld::GetSubsystem<UPDVehicleContactSubsystem>(GetWorld()))
+	{
+		VehicleContacts->RegisterPassiveBody(*Mesh);
+	}
 }
 
 void UPDHealthComponent::BroadcastLifeStateChanged(EPDLifeState PreviousState)

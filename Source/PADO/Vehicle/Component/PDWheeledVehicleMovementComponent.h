@@ -13,6 +13,9 @@
  * 데디케이티드 서버에는 로컬 PlayerController가 없어서 운전자가 내리거나 운전석을
  * 떠나면 그 사람의 마지막 입력이 남아 차가 계속 달린다. 운전자가 없으면 물리
  * 시뮬레이션이 입력을 직접 비운다.
+ *
+ * 바퀴는 사람(Pawn)과 물리로 움직이는 물체(PhysicsBody: 래그돌, 떨어진 아이템, 물리 소품)를
+ * 밟고 넘지 않는다. 엔진이 다른 차(Vehicle)를 무시하는 것과 같다. 차체는 그대로 부딪힌다.
  */
 UCLASS(ClassGroup = (PD), meta = (BlueprintSpawnableComponent))
 class PADO_API UPDWheeledVehicleMovementComponent : public UChaosWheeledVehicleMovementComponent
@@ -20,6 +23,8 @@ class PADO_API UPDWheeledVehicleMovementComponent : public UChaosWheeledVehicleM
 	GENERATED_BODY()
 
 public:
+	explicit UPDWheeledVehicleMovementComponent(const FObjectInitializer& ObjectInitializer);
+
 	/**
 	 * 서버에서 운전자가 있는지 알린다. 운전자가 없으면 스로틀·브레이크·조향이 0이 되어
 	 * 관성으로 굴러가다 선다. 서버가 기록한 이 입력은 엔진이 다른 머신에 복제한다.

@@ -3,10 +3,14 @@
 #include "Misc/AutomationTest.h"
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Camera/PlayerCameraManager.h"
 #include "CollisionQueryParams.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Engine/HitResult.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "EngineUtils.h"
@@ -17,14 +21,17 @@
 #include "PADO/AbilitySystem/Ability/PDGA_Action.h"
 #include "PADO/AbilitySystem/Ability/PDGA_ChannelAction.h"
 #include "PADO/AbilitySystem/Ability/PDGA_FireAction.h"
+#include "PADO/AbilitySystem/Attribute/PDHealthAttributeSet.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
 #include "PADO/AbilitySystem/Effect/PDGE_Damage.h"
 #include "PADO/AbilitySystem/Fragment/PDActionFragment.h"
+#include "PADO/AbilitySystem/Fragment/PDApplyGameplayEffectFragment.h"
 #include "PADO/AbilitySystem/Fragment/PDThrowProjectileFragment.h"
 #include "PADO/AbilitySystem/Projectile/PDActionProjectile.h"
 #include "PADO/AbilitySystem/Struct/PDActionHookStruct.h"
 #include "PADO/AbilitySystem/Struct/PDProjectileConfigStruct.h"
 #include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
+#include "PADO/AbilitySystem/Targeting/PDAimLineTraceTargeting.h"
 #include "PADO/AbilitySystem/Targeting/PDSelfTargeting.h"
 #include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
@@ -33,6 +40,7 @@
 #include "PADO/Character/PDPlayerController.h"
 #include "PADO/Character/PDPlayerState.h"
 #include "PADO/Interaction/Component/PDInteractionComponent.h"
+#include "PADO/Interaction/Interface/PDInteractable.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
@@ -42,10 +50,13 @@
 #include "PADO/Tests/PDCharacterTestUtils.h"
 #include "PADO/Tests/PDItemTestUtils.h"
 #include "PADO/Tests/PDTestWorldUtils.h"
+#include "PADO/Vehicle/Component/PDVehicleHealthComponent.h"
+#include "PADO/Vehicle/Component/PDVehicleImpactComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupancyComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleSeatComponent.h"
 #include "PADO/Vehicle/Component/PDWheeledVehicleMovementComponent.h"
+#include "PADO/Vehicle/PDVehicleContactSubsystem.h"
 #include "PADO/Vehicle/PDWheeledVehicle.h"
 #include "Physics/NetworkPhysicsComponent.h"
 
@@ -168,6 +179,33 @@ namespace PDVehicleSystemTests
 			}
 		}
 		return Count;
+	}
+
+	float GetHealth(const UAbilitySystemComponent& AbilitySystem)
+	{
+		return AbilitySystem.GetNumericAttribute(UPDHealthAttributeSet::GetHealthAttribute());
+	}
+
+	/**
+	 * 차체 충돌체다. 테스트 차량에는 메시 애셋이 없어 충돌이 없으므로 실제 차체처럼
+	 * Vehicle 오브젝트 타입으로 모든 채널을 막는 상자를 붙인다.
+	 */
+	UBoxComponent* AddBodyCollision(APDWheeledVehicle& Vehicle)
+	{
+		UBoxComponent* Body = NewObject<UBoxComponent>(&Vehicle);
+		Body->SetBoxExtent(FVector(250.0f, 120.0f, 100.0f));
+		Body->SetCollisionObjectType(ECC_Vehicle);
+		Body->SetCollisionResponseToAllChannels(ECR_Block);
+		Body->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		Body->SetupAttachment(Vehicle.GetRootComponent());
+		Body->RegisterComponent();
+		return Body;
+	}
+
+	/** 컨트롤러 없이 스폰한 몸에는 이동 모드가 없어 넉백이 걸리지 않는다. 빙의한 몸처럼 걷게 한다. */
+	void StartWalking(APDPlayerCharacter& Character)
+	{
+		Character.GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	}
 
 	/** 카메라가 지금 그 대상을 보거나 그 대상으로 넘어가는 중이다. */
@@ -1199,6 +1237,68 @@ bool FPDVehicleDriverlessNeutralInputTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleOneWayContactSetupTest,
+	"PADO.Vehicle.Movement.OneWayContactSetup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleOneWayContactSetupTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	UPDWheeledVehicleMovementComponent* Movement =
+		Cast<UPDWheeledVehicleMovementComponent>(Rig.Vehicle->GetVehicleMovementComponent());
+	UPDVehicleContactSubsystem* VehicleContacts =
+		UWorld::GetSubsystem<UPDVehicleContactSubsystem>(Rig.World);
+	if (TestNotNull(TEXT("차량 무브먼트가 있다."), Movement) &&
+		TestNotNull(TEXT("게임 월드에는 탈것 접촉 서브시스템이 있다."), VehicleContacts))
+	{
+		const FCollisionResponseContainer& WheelResponses = Movement->WheelTraceCollisionResponses;
+		TestEqual(TEXT("바퀴는 물리로 움직이는 물체(래그돌, 떨어진 아이템)를 밟지 않는다."),
+			static_cast<int32>(WheelResponses.GetResponse(ECC_PhysicsBody)),
+			static_cast<int32>(ECR_Ignore));
+		TestEqual(TEXT("바퀴는 사람(캡슐, 메시)을 밟지 않는다."),
+			static_cast<int32>(WheelResponses.GetResponse(ECC_Pawn)),
+			static_cast<int32>(ECR_Ignore));
+		TestEqual(TEXT("바퀴는 다른 차도 밟지 않는다(엔진 기본값)."),
+			static_cast<int32>(WheelResponses.GetResponse(ECC_Vehicle)),
+			static_cast<int32>(ECR_Ignore));
+		TestEqual(TEXT("바퀴는 지형과 구조물(WorldStatic)을 밟는다."),
+			static_cast<int32>(WheelResponses.GetResponse(ECC_WorldStatic)),
+			static_cast<int32>(ECR_Block));
+		TestEqual(TEXT("바퀴는 움직이는 구조물(WorldDynamic)을 밟는다."),
+			static_cast<int32>(WheelResponses.GetResponse(ECC_WorldDynamic)),
+			static_cast<int32>(ECR_Block));
+
+		// 물리 바디가 있는 몸을 밀리기만 하는 몸으로 등록했다가 지운다. 물리 스레드 목록은
+		// 바디가 사라질 때 엔진 알림으로 비워진다. 월드를 정리할 때 콜백도 해제된다.
+		UStaticMesh* SphereMesh =
+			LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+		AStaticMeshActor* Prop = Rig.World->SpawnActor<AStaticMeshActor>(FVector(0.0f, 600.0f, 200.0f), FRotator::ZeroRotator);
+		if (TestNotNull(TEXT("구 메시를 불러온다."), SphereMesh) &&
+			TestNotNull(TEXT("물리 소품을 스폰한다."), Prop))
+		{
+			UStaticMeshComponent* PropMesh = Prop->GetStaticMeshComponent();
+			PropMesh->SetMobility(EComponentMobility::Movable);
+			PropMesh->SetStaticMesh(SphereMesh);
+			PropMesh->SetCollisionProfileName(TEXT("PhysicsActor"));
+			PropMesh->SetSimulatePhysics(true);
+			VehicleContacts->RegisterPassiveBody(*PropMesh);
+			VehicleContacts->RegisterVehicle(*Rig.Vehicle->GetMesh());
+			Prop->Destroy();
+		}
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPDVehicleOccupantDiesTest,
 	"PADO.Vehicle.Occupancy.DiesWhileSeated",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1240,6 +1340,370 @@ bool FPDVehicleOccupantDiesTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("손 사용 불가 태그는 탑승이 뗀 뒤 사망이 붙인 하나만 남는다."),
 			AbilitySystem->GetTagCount(TAG_PD_State_HandsBlocked),
 			1);
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleHealthAndDestructionTest,
+	"PADO.Vehicle.Damage.HealthAndDestruction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleHealthAndDestructionTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APlayerController* Controller = nullptr;
+	APDPlayerCharacter* Driver = Rig.SpawnPossessedRider(FVector(50.0f, -300.0f, 0.0f), Controller);
+	APDPlayerCharacter* Passenger = Rig.SpawnRider(FVector(50.0f, 300.0f, 0.0f));
+	APDPlayerCharacter* Shooter = Rig.SpawnRider(FVector(-800.0f, 0.0f, 0.0f));
+	APDPlayerCharacter* Walker = Rig.SpawnRider(FVector(0.0f, 600.0f, 0.0f));
+	UAbilitySystemComponent* VehicleAbilitySystem = Rig.Vehicle->GetAbilitySystemComponent();
+	UAbilitySystemComponent* ShooterAbilitySystem = Shooter ? Shooter->GetAbilitySystemComponent() : nullptr;
+	UPDVehicleHealthComponent* VehicleHealth = Rig.Vehicle->GetHealthComponent();
+	if (TestNotNull(TEXT("운전자를 준비한다."), Driver) &&
+		TestNotNull(TEXT("동승자를 준비한다."), Passenger) &&
+		TestNotNull(TEXT("타지 않은 사람을 준비한다."), Walker) &&
+		TestNotNull(TEXT("차량에 ASC가 있다."), VehicleAbilitySystem) &&
+		TestNotNull(TEXT("쏘는 사람의 ASC가 있다."), ShooterAbilitySystem) &&
+		TestNotNull(TEXT("차량에 체력 컴포넌트가 있다."), VehicleHealth))
+	{
+		TestTrue(TEXT("피해 Fragment가 찾는 방식으로 차량의 ASC를 찾는다."),
+			UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Rig.Vehicle) ==
+				VehicleAbilitySystem);
+		TestEqual(TEXT("차량의 최대 체력은 차량 설정(기본 1000)이다."),
+			VehicleAbilitySystem->GetNumericAttribute(UPDHealthAttributeSet::GetMaxHealthAttribute()),
+			1000.0f);
+		TestEqual(TEXT("처음에는 체력이 가득 차 있다."), GetHealth(*VehicleAbilitySystem), 1000.0f);
+
+		TestTrue(TEXT("운전석에 탄다."), Rig.Occupancy->TryEnter(Driver, Rig.DriverSeat));
+		TestTrue(TEXT("동승석에 탄다."), Rig.Occupancy->TryEnter(Passenger, Rig.FrontPassengerSeat));
+
+		UPDGE_Damage::ApplyDamage(*ShooterAbilitySystem, *VehicleAbilitySystem, 300.0f, Shooter);
+		TestEqual(TEXT("차량이 피해를 받는다."), GetHealth(*VehicleAbilitySystem), 700.0f);
+		TestFalse(TEXT("체력이 남으면 파괴되지 않는다."), VehicleHealth->IsDestroyed());
+		TestTrue(TEXT("차가 맞아도 탄 사람은 그대로다."),
+			Driver->IsAlive() && Passenger->IsAlive() &&
+				Driver->GetVehicleOccupantComponent()->IsSeated());
+
+		UPDGE_Damage::ApplyDamage(*ShooterAbilitySystem, *VehicleAbilitySystem, 700.0f, Shooter);
+		TestTrue(TEXT("체력이 0이 되면 파괴된다."), VehicleHealth->IsDestroyed());
+		TestTrue(TEXT("파괴된 차량은 죽은 상태다."),
+			VehicleAbilitySystem->HasMatchingGameplayTag(TAG_PD_State_Dead));
+
+		TestTrue(TEXT("파괴되면 운전자가 죽는다."), Driver->IsDead());
+		TestTrue(TEXT("파괴되면 동승자도 죽는다."), Passenger->IsDead());
+		TestEqual(TEXT("죽은 탑승자의 체력은 0이다."),
+			GetHealth(*Passenger->GetAbilitySystemComponent()),
+			0.0f);
+		TestFalse(TEXT("죽은 운전자는 내린다."), Driver->GetVehicleOccupantComponent()->IsSeated());
+		TestFalse(TEXT("죽은 동승자도 내린다."), Passenger->GetVehicleOccupantComponent()->IsSeated());
+		TestNull(TEXT("운전자가 사라져 조종 권한을 거둔다."), Rig.Vehicle->GetVehicleController());
+
+		UPDGE_Damage::ApplyDamage(*ShooterAbilitySystem, *VehicleAbilitySystem, 100.0f, Shooter);
+		TestEqual(TEXT("파괴된 뒤에는 체력이 그대로다."), GetHealth(*VehicleAbilitySystem), 0.0f);
+
+		FPDInteractionContextStruct Context;
+		Context.Instigator = Walker;
+		TestFalse(TEXT("파괴된 차량에는 탈 수 없다."),
+			IPDInteractable::Execute_CanInteract(Rig.Vehicle, Context));
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleSeatedNotTargetedTest,
+	"PADO.Vehicle.Damage.SeatedNotTargeted",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleSeatedNotTargetedTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	// 컨트롤러가 없는 사수는 눈높이에서 정면(+X)으로 쏜다. 앉은 동승자가 그 선 위에 있다.
+	APDPlayerCharacter* Rider = Rig.SpawnRider(FVector(50.0f, 300.0f, 0.0f));
+	APDPlayerCharacter* Shooter = Rig.SpawnRider(FVector(-1000.0f, 60.0f, 0.0f));
+	UPDAimLineTraceTargeting* Targeting = NewObject<UPDAimLineTraceTargeting>(GetTransientPackage());
+	Targeting->TraceDistance = 3000.0f;
+	Targeting->TargetObjectTypes = {
+		UEngineTypes::ConvertToObjectType(ECC_Pawn),
+		UEngineTypes::ConvertToObjectType(ECC_Vehicle)};
+	if (TestNotNull(TEXT("동승자를 준비한다."), Rider) &&
+		TestNotNull(TEXT("사수를 준비한다."), Shooter) &&
+		TestTrue(TEXT("동승석에 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat)))
+	{
+		FPDActionTargetingContext Context;
+		Context.SourceActor = Shooter;
+
+		FPDActionTargetingResult OpenVehicle;
+		Targeting->GatherTargets(Context, OpenVehicle);
+		TestEqual(TEXT("차체 충돌이 없는 곳이어도 앉은 사람은 맞지 않는다."),
+			OpenVehicle.Targets.Num(), 0);
+
+		UBoxComponent* Body = AddBodyCollision(*Rig.Vehicle);
+		FPDActionTargetingResult ClosedVehicle;
+		Targeting->GatherTargets(Context, ClosedVehicle);
+		TestEqual(TEXT("차체를 맞힌다."), ClosedVehicle.Targets.Num(), 1);
+		TestTrue(TEXT("맞은 대상은 차량이다."),
+			ClosedVehicle.Targets.Num() == 1 && ClosedVehicle.Targets[0].Actor == Rig.Vehicle);
+		TestTrue(TEXT("탄은 차체에서 멈춘다."),
+			ClosedVehicle.ShotResult.GetComponent() == Body);
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleExplosionSparesOccupantsTest,
+	"PADO.Vehicle.Damage.ExplosionSparesOccupants",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleExplosionSparesOccupantsTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APDPlayerCharacter* Rider = Rig.SpawnRider(FVector(50.0f, 300.0f, 0.0f));
+	APDPlayerCharacter* Walker = Rig.SpawnRider(FVector(0.0f, 250.0f, 0.0f));
+	APDPlayerCharacter* Thrower = Rig.SpawnRider(FVector(-2000.0f, 0.0f, 0.0f));
+	UStaticMesh* SphereMesh =
+		LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (!TestNotNull(TEXT("동승자를 준비한다."), Rider) ||
+		!TestNotNull(TEXT("옆에 선 사람을 준비한다."), Walker) ||
+		!TestNotNull(TEXT("던지는 사람을 준비한다."), Thrower) ||
+		!TestNotNull(TEXT("투사체 메시를 불러온다."), SphereMesh) ||
+		!TestTrue(TEXT("동승석에 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat)))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	// 투사체 충돌 프로필 정의는 이 테스트 범위 밖이다.
+	AddExpectedMessagePlain(
+		TEXT("COLLISION PROFILE [PDProjectile] is not found"),
+		ELogVerbosity::Warning,
+		EAutomationExpectedMessageFlags::Contains,
+		-1);
+
+	// 반경 안의 대상마다 피해 40을 주는 폭발이다.
+	UPDApplyGameplayEffectFragment* DamageFragment =
+		NewObject<UPDApplyGameplayEffectFragment>(GetTransientPackage());
+	DamageFragment->EffectRecipe.EffectClass = UPDGE_Damage::StaticClass();
+	FPDSetByCallerValueStruct& DamageValue = DamageFragment->EffectRecipe.SetByCallers.AddDefaulted_GetRef();
+	DamageValue.DataTag = TAG_PD_Data_Damage;
+	DamageValue.Magnitude = 40.0f;
+	const TArray<TObjectPtr<UPDActionFragment>> TargetFragments = {DamageFragment};
+	const TArray<TObjectPtr<UPDActionFragment>> NoFragments;
+
+	FPDProjectileLaunchConfigStruct LaunchConfig;
+	LaunchConfig.ProjectileClass = APDActionProjectile::StaticClass();
+	LaunchConfig.ProjectileMesh = SphereMesh;
+	FPDProjectileExplosionConfigStruct ExplosionConfig;
+	ExplosionConfig.ExplosionRadius = 600.0f;
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = Thrower;
+	SpawnParameters.Instigator = Thrower;
+	APDActionProjectile* Projectile = Rig.World->SpawnActor<APDActionProjectile>(
+		FVector(0.0f, 150.0f, 0.0f), FRotator::ZeroRotator, SpawnParameters);
+	UAbilitySystemComponent* VehicleAbilitySystem = Rig.Vehicle->GetAbilitySystemComponent();
+	if (TestNotNull(TEXT("투사체를 스폰한다."), Projectile) &&
+		TestTrue(TEXT("투사체를 준비한다."),
+			Projectile->InitializeProjectile(
+				LaunchConfig,
+				ExplosionConfig,
+				TargetFragments,
+				NoFragments,
+				Thrower->GetPDAbilitySystemComponent(),
+				nullptr,
+				Thrower,
+				Thrower,
+				FVector::ZeroVector)) &&
+		TestTrue(TEXT("차 옆에서 터진다."), Projectile->Detonate()))
+	{
+		TestEqual(TEXT("앉은 사람은 폭발을 맞지 않는다."),
+			GetHealth(*Rider->GetAbilitySystemComponent()), 100.0f);
+		TestEqual(TEXT("옆에 선 사람은 맞는다."),
+			GetHealth(*Walker->GetAbilitySystemComponent()), 60.0f);
+		TestEqual(TEXT("차량은 맞는다."), GetHealth(*VehicleAbilitySystem), 960.0f);
+	}
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleRammingTest,
+	"PADO.Vehicle.Damage.Ramming",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleRammingTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APlayerController* Controller = nullptr;
+	APDPlayerCharacter* Driver = Rig.SpawnPossessedRider(FVector(50.0f, -300.0f, 0.0f), Controller);
+	APDPlayerCharacter* Passenger = Rig.SpawnRider(FVector(50.0f, 300.0f, 0.0f));
+	APDPlayerCharacter* Victim = Rig.SpawnRider(FVector(500.0f, 0.0f, 0.0f));
+	APDPlayerCharacter* Bystander = Rig.SpawnRider(FVector(500.0f, 400.0f, 0.0f));
+	APDPlayerCharacter* Runner = Rig.SpawnRider(FVector(500.0f, -400.0f, 0.0f));
+	UPDVehicleImpactComponent* Impact = Rig.Vehicle->GetImpactComponent();
+	UPawnMovementComponent* VehicleMovement = Rig.Vehicle->GetMovementComponent();
+	if (!TestNotNull(TEXT("운전자를 준비한다."), Driver) ||
+		!TestNotNull(TEXT("동승자를 준비한다."), Passenger) ||
+		!TestNotNull(TEXT("치일 사람을 준비한다."), Victim) ||
+		!TestNotNull(TEXT("밀려날 사람을 준비한다."), Bystander) ||
+		!TestNotNull(TEXT("크게 치일 사람을 준비한다."), Runner) ||
+		!TestNotNull(TEXT("차량에 들이받기 컴포넌트가 있다."), Impact) ||
+		!TestNotNull(TEXT("차량 무브먼트가 있다."), VehicleMovement))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	StartWalking(*Victim);
+	StartWalking(*Bystander);
+	StartWalking(*Runner);
+	UAbilitySystemComponent* VictimAbilitySystem = Victim->GetAbilitySystemComponent();
+	UCharacterMovementComponent* VictimMovement = Victim->GetCharacterMovement();
+
+	TestEqual(TEXT("캐릭터 캡슐은 차를 물리로 막지 않고 접촉만 알린다."),
+		static_cast<int32>(Victim->GetCapsuleComponent()->GetCollisionEnabled()),
+		static_cast<int32>(ECollisionEnabled::QueryAndProbe));
+
+	TestTrue(TEXT("운전석에 탄다."), Rig.Occupancy->TryEnter(Driver, Rig.DriverSeat));
+	TestTrue(TEXT("동승석에 탄다."), Rig.Occupancy->TryEnter(Passenger, Rig.FrontPassengerSeat));
+
+	// 차가 앞(+X)으로 달리고 사람은 차 앞에 있다. 테스트 차체는 물리 시뮬레이션을 하지
+	// 않아 무브먼트의 속도가 차량 속도다.
+	const FVector FrontContact(450.0f, 0.0f, 0.0f);
+
+	VehicleMovement->Velocity = FVector::ZeroVector;
+	VictimMovement->Velocity = FVector(-400.0f, 0.0f, 0.0f);
+	TestFalse(TEXT("멈춘 차로 걸어 들어가는 것은 치인 것이 아니다."),
+		Impact->HandleCharacterContact(*Victim, FrontContact));
+	VictimMovement->Velocity = FVector::ZeroVector;
+
+	// 37.5km/h는 피해 구간(15~60km/h)의 한가운데라 피해 50이다.
+	VehicleMovement->Velocity = FVector(1042.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("달리는 차가 사람을 친다."), Impact->HandleCharacterContact(*Victim, FrontContact));
+	TestEqual(TEXT("다가오던 속도에 비례해 다친다."), GetHealth(*VictimAbilitySystem), 50.0f, 0.1f);
+	TestEqual(TEXT("차가 가던 방향으로 차보다 빠르게 밀려난다."),
+		VictimMovement->PendingLaunchVelocity.X, 1042.0 * 1.2, 1.0);
+	TestEqual(TEXT("밀려날 때 뜬다."), VictimMovement->PendingLaunchVelocity.Z, 250.0, 1.0);
+
+	TestFalse(TEXT("한 번 부딪힐 때 접촉이 여러 번 와도 한 번만 친다."),
+		Impact->HandleCharacterContact(*Victim, FrontContact));
+	TestEqual(TEXT("다시 다치지 않는다."), GetHealth(*VictimAbilitySystem), 50.0f, 0.1f);
+
+	TestFalse(TEXT("탄 사람은 치지 않는다."),
+		Impact->HandleCharacterContact(*Passenger, FrontContact));
+
+	VehicleMovement->Velocity = FVector(300.0f, 0.0f, 0.0f);
+	TestTrue(TEXT("느린 차도 사람을 밀어낸다."),
+		Impact->HandleCharacterContact(*Bystander, FVector(450.0f, 400.0f, 0.0f)));
+	TestEqual(TEXT("피해 속도보다 느리면 다치지 않는다."),
+		GetHealth(*Bystander->GetAbilitySystemComponent()), 100.0f);
+	TestFalse(TEXT("밀어내기는 건다."),
+		Bystander->GetCharacterMovement()->PendingLaunchVelocity.IsNearlyZero());
+
+	// 차체 피격 알림으로 온 접촉도 같은 판정을 거친다.
+	VehicleMovement->Velocity = FVector(1667.0f, 0.0f, 0.0f);
+	FHitResult Hit;
+	Hit.ImpactPoint = FVector(450.0f, -400.0f, 0.0f);
+	Rig.Vehicle->GetMesh()->OnComponentHit.Broadcast(
+		Rig.Vehicle->GetMesh(),
+		Runner,
+		Runner->GetCapsuleComponent(),
+		FVector::ZeroVector,
+		Hit);
+	TestTrue(TEXT("60km/h로 치면 즉사한다."), Runner->IsDead());
+
+	Rig.TearDown();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPDVehicleExitFallDamageTest,
+	"PADO.Vehicle.Damage.ExitFallDamage",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPDVehicleExitFallDamageTest::RunTest(const FString& Parameters)
+{
+	using namespace PDVehicleSystemTests;
+	FVehicleRig Rig;
+	if (!TestTrue(TEXT("차량을 준비한다."), Rig.SetUp()))
+	{
+		Rig.TearDown();
+		return false;
+	}
+
+	APDPlayerCharacter* Rider = Rig.SpawnRider(FVector(50.0f, 300.0f, 0.0f));
+	UPawnMovementComponent* VehicleMovement = Rig.Vehicle->GetMovementComponent();
+	UAbilitySystemComponent* AbilitySystem = Rider ? Rider->GetAbilitySystemComponent() : nullptr;
+	if (TestNotNull(TEXT("탑승자를 준비한다."), Rider) &&
+		TestNotNull(TEXT("탑승자의 ASC가 있다."), AbilitySystem) &&
+		TestNotNull(TEXT("차량 무브먼트가 있다."), VehicleMovement))
+	{
+		// 착지는 무브먼트가 처리한다. 테스트 World는 틱이 없어 착지를 직접 알린다.
+		const FHitResult Ground;
+
+		// 50km/h는 피해 구간(20~80km/h)의 한가운데라 피해 50이다.
+		TestTrue(TEXT("동승석에 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat));
+		VehicleMovement->Velocity = FVector(1389.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("달리는 차에서 내린다."), Rig.Occupancy->TryExit(Rider));
+		TestEqual(TEXT("내리는 순간에는 다치지 않는다."), GetHealth(*AbilitySystem), 100.0f);
+		Rider->Landed(Ground);
+		TestEqual(TEXT("착지할 때 하차 속도에 비례해 다친다."), GetHealth(*AbilitySystem), 50.0f, 0.1f);
+		Rider->Landed(Ground);
+		TestEqual(TEXT("하차 피해는 한 번이다."), GetHealth(*AbilitySystem), 50.0f, 0.1f);
+
+		TestTrue(TEXT("다시 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat));
+		VehicleMovement->Velocity = FVector(400.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("천천히 가는 차에서 내린다."), Rig.Occupancy->TryExit(Rider));
+		Rider->Landed(Ground);
+		TestEqual(TEXT("20km/h보다 느리면 다치지 않는다."), GetHealth(*AbilitySystem), 50.0f, 0.1f);
+
+		TestTrue(TEXT("다시 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat));
+		VehicleMovement->Velocity = FVector(2222.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("빠르게 달리는 차에서 내린다."), Rig.Occupancy->TryExit(Rider));
+		TestTrue(TEXT("착지 전에 다시 탄다."), Rig.Occupancy->TryEnter(Rider, Rig.FrontPassengerSeat));
+		Rider->Landed(Ground);
+		TestEqual(TEXT("착지 전에 다시 타면 앞선 하차의 피해는 없다."),
+			GetHealth(*AbilitySystem), 50.0f, 0.1f);
+
+		VehicleMovement->Velocity = FVector(2222.0f, 0.0f, 0.0f);
+		TestTrue(TEXT("80km/h로 달리는 차에서 내린다."), Rig.Occupancy->TryExit(Rider));
+		Rider->Landed(Ground);
+		TestTrue(TEXT("80km/h면 최대 피해(100)로 죽는다."), Rider->IsDead());
 	}
 
 	Rig.TearDown();

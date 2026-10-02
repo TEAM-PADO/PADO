@@ -89,21 +89,22 @@ void UPDAimLineTraceTargeting::GatherTargets(
 		}
 	}
 
+	// 끝점은 1단계 판정이 맞힌 표면 위에 있다. 딱 거기서 끝내면 부동소수 오차로 그
+	// 표면을 놓친다. 벽에 쏜 탄이 허공에 멈춘 것으로 나오고, 차량처럼 Visibility를
+	// 막는 대상은 대상에서 빠진다. 가림과 대상 모두 표면 너머까지 조금 더 본다.
 	const FVector Direction = (End - Start).GetSafeNormal();
+	const FVector ProbeEnd = End + Direction * PDAimLineTraceTargeting::SurfaceProbeDistance;
 	FHitResult ObstructionHit;
 	bool bObstructed = false;
 	float ObstructionDistanceSquared = TNumericLimits<float>::Max();
 	if (bRequireUnobstructedPath)
 	{
-		// 끝점은 1단계 판정이 맞힌 표면 위에 있다. 딱 거기서 끝내면 부동소수
-		// 오차로 그 표면을 놓쳐 벽에 쏜 탄이 허공에 멈춘 것으로 나온다.
-		// 대상은 끝점까지만 모으므로 조금 더 보는 것은 대상 판정에 영향이 없다.
 		const ECollisionChannel Channel = UEngineTypes::ConvertToCollisionChannel(
 			ObstructionTraceChannel.GetValue());
 		bObstructed = Channel < ECC_MAX && World->LineTraceSingleByChannel(
 			ObstructionHit,
 			Start,
-			End + Direction * PDAimLineTraceTargeting::SurfaceProbeDistance,
+			ProbeEnd,
 			Channel,
 			QueryParams);
 		if (bObstructed)
@@ -114,16 +115,20 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	}
 
 	TArray<FHitResult> Hits;
-	World->LineTraceMultiByObjectType(Hits, Start, End, ObjectParams, QueryParams);
+	World->LineTraceMultiByObjectType(Hits, Start, ProbeEnd, ObjectParams, QueryParams);
 	TArray<FPDActionTarget>& OutTargets = OutResult.Targets;
 	TSet<TObjectPtr<AActor>> SeenActors;
 	for (const FHitResult& Hit : Hits)
 	{
+		// 탄을 막은 것이 이 대상 자신이면(차량) 거리를 비교하지 않는다. 같은 표면을 두
+		// 판정이 따로 재서 오차만큼 뒤에 나올 수 있다.
 		AActor* HitActor = Hit.GetActor();
+		const bool bBlockedByThisTarget = bObstructed && ObstructionHit.GetActor() == HitActor;
 		if (!IsValid(HitActor) || SeenActors.Contains(HitActor) ||
 			(TargetActorClass && !HitActor->IsA(TargetActorClass)) ||
-			FVector::DistSquared(Start, Hit.ImpactPoint) >
-				ObstructionDistanceSquared + UE_KINDA_SMALL_NUMBER)
+			(!bBlockedByThisTarget &&
+				FVector::DistSquared(Start, Hit.ImpactPoint) >
+					ObstructionDistanceSquared + UE_KINDA_SMALL_NUMBER))
 		{
 			continue;
 		}

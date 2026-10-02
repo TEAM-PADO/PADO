@@ -8,12 +8,17 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "PADO/AbilitySystem/Attribute/PDHealthAttributeSet.h"
+#include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
 #include "PADO/Character/PDCharacterBase.h"
 #include "PADO/Character/PDPlayerController.h"
+#include "PADO/Vehicle/Component/PDVehicleHealthComponent.h"
+#include "PADO/Vehicle/Component/PDVehicleImpactComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupancyComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
 #include "PADO/Vehicle/Component/PDVehicleSeatComponent.h"
 #include "PADO/Vehicle/Component/PDWheeledVehicleMovementComponent.h"
+#include "PADO/Vehicle/PDVehicleContactSubsystem.h"
 #include "Physics/NetworkPhysicsComponent.h"
 
 namespace PDWheeledVehicleDefaults
@@ -56,6 +61,33 @@ APDWheeledVehicle::APDWheeledVehicle(const FObjectInitializer& ObjectInitializer
 
 	OccupancyComponent =
 		CreateDefaultSubobject<UPDVehicleOccupancyComponent>(TEXT("Occupancy"));
+
+	// 서브오브젝트 이름은 파생 Blueprint에 저장된 컴포넌트 값의 키다. 바꾸지 않는다.
+	AbilitySystemComponent =
+		CreateDefaultSubobject<UPDAbilitySystemComponent>(TEXT("AbilitySystem"));
+	AbilitySystemComponent->SetIsReplicated(true);
+	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Minimal);
+
+	// 액터의 Attribute Set 서브오브젝트는 ASC가 초기화할 때 스스로 모은다.
+	HealthAttributes =
+		CreateDefaultSubobject<UPDHealthAttributeSet>(TEXT("HealthAttributes"));
+	HealthComponent =
+		CreateDefaultSubobject<UPDVehicleHealthComponent>(TEXT("Health"));
+	ImpactComponent =
+		CreateDefaultSubobject<UPDVehicleImpactComponent>(TEXT("Impact"));
+}
+
+void APDWheeledVehicle::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	// 탈것은 ASC의 소유자이자 아바타다. 체력 컴포넌트가 BeginPlay에서 이 ASC를 쓴다.
+	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+}
+
+UAbilitySystemComponent* APDWheeledVehicle::GetAbilitySystemComponent() const
+{
+	return AbilitySystemComponent;
 }
 
 void APDWheeledVehicle::Tick(float DeltaSeconds)
@@ -79,7 +111,8 @@ bool APDWheeledVehicle::CanInteract_Implementation(
 	return Occupant &&
 		!Occupant->IsSeated() &&
 		OccupancyComponent &&
-		OccupancyComponent->HasFreeSeat();
+		OccupancyComponent->HasFreeSeat() &&
+		!(HealthComponent && HealthComponent->IsDestroyed());
 }
 
 bool APDWheeledVehicle::Interact_Implementation(
@@ -126,6 +159,13 @@ void APDWheeledVehicle::SetVehicleController(AController* NewController)
 void APDWheeledVehicle::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 래그돌처럼 머신마다 따로 도는 몸이 차를 밀지 못하게 한다. 모든 머신에서 등록한다.
+	if (UPDVehicleContactSubsystem* VehicleContacts =
+		UWorld::GetSubsystem<UPDVehicleContactSubsystem>(GetWorld()))
+	{
+		VehicleContacts->RegisterVehicle(*GetMesh());
+	}
 
 	if (HasAuthority() && !VehicleController)
 	{

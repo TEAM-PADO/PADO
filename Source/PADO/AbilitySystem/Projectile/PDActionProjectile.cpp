@@ -298,7 +298,11 @@ void APDActionProjectile::GatherExplosionTargets(
 	for (TActorIterator<APawn> It(World); It; ++It)
 	{
 		APawn* Target = *It;
+
+		// 충돌이 꺼진 몸(탈것에 앉은 탑승자)은 총·근접 판정처럼 폭발도 맞지 않는다.
+		// 탑승자 대신 탈것이 피해를 받는다.
 		if (!IsValid(Target) ||
+			!Target->GetActorEnableCollision() ||
 			FVector::DistSquared(GetActorLocation(), Target->GetActorLocation()) >
 				RadiusSquared ||
 			(!ActiveExplosionConfig.bAffectInstigator && Target == GetInstigator()) ||

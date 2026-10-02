@@ -51,7 +51,8 @@ public class PADO : ModuleRules
 
 		// PhysicsCore: Fire Action 발 기록이 탄착 표면 재질(UPhysicalMaterial)을 싣는다.
 		// ChaosVehicles: 바퀴형 탈것(APDWheeledVehicle)의 주행 물리와 예측이다.
-		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "PhysicsCore", "ChaosVehicles" });
+		// Chaos: 탈것과 래그돌의 접촉을 한쪽 방향으로 고치는 물리 콜백(UPDVehicleContactSubsystem)이다.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara", "PhysicsCore", "ChaosVehicles", "Chaos" });
 
 		// UI 위젯 내부 구현용 Slate
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

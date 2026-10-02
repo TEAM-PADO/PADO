@@ -4,6 +4,8 @@
 #include "GameplayEffect.h"
 #include "PDGE_Damage.generated.h"
 
+class UAbilitySystemComponent;
+
 /**
  * 공용 피해 GE다. 즉시 적용되고, 피해량을 SetByCaller `Data.Damage`로 받는다.
  *
@@ -18,4 +20,16 @@ class PADO_API UPDGE_Damage : public UGameplayEffect
 
 public:
 	UPDGE_Damage();
+
+	/**
+	 * 서버에서 Source ASC가 Target ASC에 피해를 준다. 아이템 행동이 아닌 피해(들이받기,
+	 * 하차 착지)가 쓴다. Instigator는 Source ASC의 소유자(논리적 주체), EffectCauser는
+	 * 피해를 일으킨 물체다. 반환값은 Effect를 실행했는지다. 죽은 대상(State.Dead)의
+	 * 체력은 Attribute Set이 깎지 않는다.
+	 */
+	static bool ApplyDamage(
+		UAbilitySystemComponent& Source,
+		UAbilitySystemComponent& Target,
+		float Damage,
+		AActor* EffectCauser);
 };
