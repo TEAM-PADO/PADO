@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="PADO 기획과 개발 현황, 결정 사항, 팀 변경 및 통합 검증을 확인하는 로컬 대시보드">
+  <title>PADO · 프로젝트 대시보드</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="dashboard-data.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 이동</a>
+  <aside class="sidebar" aria-label="프로젝트 탐색">
+    <a class="brand" href="#overview"><span class="brand-symbol">P</span><span>PADO<small>PROJECT DESK</small></span></a>
+    <div class="workspace-label">좀비세상 우편배달</div>
+    <nav id="navigation" aria-label="대시보드 메뉴"></nav>
+    <div class="sidebar-bottom"><span class="local-badge">로컬 작업 공간</span><p>팀 변경을 받고<br>판단할 내용을 확인하세요.</p><button class="text-button" data-action="help">갱신 방법 보기</button></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span class="breadcrumb">프로젝트 <span>/</span> <strong id="breadcrumb">한눈에 보기</strong></span><div class="topbar-actions"><span id="revision" class="revision"></span><button class="button small" data-action="help">사용 안내</button></div></header>
+    <main id="main" tabindex="-1"><div class="loading">프로젝트 자료를 불러오는 중입니다.</div></main>
+    <footer><span>PADO · 팀 공용 기획과 개발 현황</span><span id="updated-at"></span></footer>
+  </div>
+  <dialog id="document-dialog" class="document-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-header"><div><span id="dialog-eyebrow" class="eyebrow">기획 문서</span><h2 id="dialog-title"></h2></div><button class="icon-button" data-action="close-dialog" aria-label="닫기">×</button></div>
+    <div id="dialog-toolbar" class="dialog-toolbar"></div><div id="dialog-content" class="dialog-content"></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript>이 대시보드를 보려면 브라우저에서 JavaScript를 허용해 주세요.</noscript>
+</body>
+</html>
