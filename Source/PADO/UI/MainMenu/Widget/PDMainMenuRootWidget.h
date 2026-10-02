@@ -8,7 +8,7 @@
 #include "PDMainMenuRootWidget.generated.h"
 
 class UCommonActivatableWidgetStack;
-class UPDMainMenuScreenBase;
+class UPDActivatableWidget;
 class UPDMainMenuViewModel;
 
 /**
@@ -35,9 +35,12 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 
-	/** 화면 종류별 WBP 클래스다. WBP_MainMenuRoot의 기본값에서 지정한다. */
+	/**
+	 * 화면 종류별 WBP 클래스다. WBP_MainMenuRoot의 기본값에서 지정한다.
+	 * 메인 메뉴 전용 화면은 UPDMainMenuScreenBase를, 인게임과 함께 쓰는 옵션 창은 UPDActivatableWidget을 부모로 한다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "PADO|MainMenu")
-	TMap<EPDMainMenuScreen, TSubclassOf<UPDMainMenuScreenBase>> ScreenClasses;
+	TMap<EPDMainMenuScreen, TSubclassOf<UPDActivatableWidget>> ScreenClasses;
 
 private:
 	UPROPERTY(meta = (BindWidget))
