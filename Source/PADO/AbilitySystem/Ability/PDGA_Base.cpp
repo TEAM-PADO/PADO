@@ -2,6 +2,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
+#include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffect.h"
@@ -552,8 +553,21 @@ FGameplayEffectSpecHandle UPDGA_Base::MakeEffectSpec(
 		return FGameplayEffectSpecHandle();
 	}
 
+	// Instigator는 논리적 주체(ASC 소유자), EffectCauser는 물리적 원인이다.
+	// Source가 아이템 같은 액터의 컴포넌트면 그 액터가 원인이고, 없으면 아바타다.
+	UObject* SourceObject = GetCurrentSourceObject();
+	const UActorComponent* SourceComponent = Cast<UActorComponent>(SourceObject);
+	AActor* EffectCauser = SourceComponent
+		? SourceComponent->GetOwner()
+		: Cast<AActor>(SourceObject);
+	if (!EffectCauser)
+	{
+		EffectCauser = GetAvatarActorFromActorInfo();
+	}
+
 	FGameplayEffectContextHandle Context = AbilitySystem->MakeEffectContext();
-	Context.AddSourceObject(GetCurrentSourceObject());
+	Context.AddInstigator(AbilitySystem->GetOwnerActor(), EffectCauser);
+	Context.AddSourceObject(SourceObject);
 
 	FGameplayEffectSpecHandle SpecHandle = AbilitySystem->MakeOutgoingSpec(
 		Recipe.EffectClass,

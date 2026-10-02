@@ -133,6 +133,9 @@ private:
 
 	TWeakObjectPtr<AActor> IgnoredSourceActor;
 	TWeakObjectPtr<APawn> IgnoredSourcePawn;
+
+	/** 발사 순간 발사자가 앉아 있던 탈것이다. 차체가 좌석을 감싸므로 날아가는 동안 무시한다. */
+	TWeakObjectPtr<AActor> IgnoredSourceVehicle;
 	FTimerHandle FuseTimerHandle;
 	bool bInitialized = false;
 	bool bHasDetonated = false;

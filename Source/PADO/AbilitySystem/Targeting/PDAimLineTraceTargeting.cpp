@@ -5,9 +5,9 @@
 #include "Components/MeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/Pawn.h"
 #include "PADO/AbilitySystem/Component/PDAbilitySourceComponent.h"
+#include "PADO/AbilitySystem/Targeting/PDTargetingCollision.h"
+#include "PADO/Core/PDViewPoint.h"
 #include "PADO/Item/PDWorldItemActor.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPDTargeting, Log, All);
@@ -68,12 +68,8 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(PDAimLineTrace), true);
 	// 탄착 연출이 표면에 따라 달라질 수 있도록 멈춘 곳의 재질을 받아 둔다.
 	QueryParams.bReturnPhysicalMaterial = true;
-	QueryParams.AddIgnoredActor(Context.SourceActor);
-	if (const UActorComponent* SourceComponent =
-		Cast<UActorComponent>(Context.SourceObject))
-	{
-		QueryParams.AddIgnoredActor(SourceComponent->GetOwner());
-	}
+	PDTargetingCollision::AddIgnoredSourceActors(
+		QueryParams, *Context.SourceActor, Context.SourceObject);
 
 	FVector Start;
 	FVector End;
@@ -93,21 +89,22 @@ void UPDAimLineTraceTargeting::GatherTargets(
 		}
 	}
 
+	// 끝점은 1단계 판정이 맞힌 표면 위에 있다. 딱 거기서 끝내면 부동소수 오차로 그
+	// 표면을 놓친다. 벽에 쏜 탄이 허공에 멈춘 것으로 나오고, 차량처럼 Visibility를
+	// 막는 대상은 대상에서 빠진다. 가림과 대상 모두 표면 너머까지 조금 더 본다.
 	const FVector Direction = (End - Start).GetSafeNormal();
+	const FVector ProbeEnd = End + Direction * PDAimLineTraceTargeting::SurfaceProbeDistance;
 	FHitResult ObstructionHit;
 	bool bObstructed = false;
 	float ObstructionDistanceSquared = TNumericLimits<float>::Max();
 	if (bRequireUnobstructedPath)
 	{
-		// 끝점은 1단계 판정이 맞힌 표면 위에 있다. 딱 거기서 끝내면 부동소수
-		// 오차로 그 표면을 놓쳐 벽에 쏜 탄이 허공에 멈춘 것으로 나온다.
-		// 대상은 끝점까지만 모으므로 조금 더 보는 것은 대상 판정에 영향이 없다.
 		const ECollisionChannel Channel = UEngineTypes::ConvertToCollisionChannel(
 			ObstructionTraceChannel.GetValue());
 		bObstructed = Channel < ECC_MAX && World->LineTraceSingleByChannel(
 			ObstructionHit,
 			Start,
-			End + Direction * PDAimLineTraceTargeting::SurfaceProbeDistance,
+			ProbeEnd,
 			Channel,
 			QueryParams);
 		if (bObstructed)
@@ -118,16 +115,20 @@ void UPDAimLineTraceTargeting::GatherTargets(
 	}
 
 	TArray<FHitResult> Hits;
-	World->LineTraceMultiByObjectType(Hits, Start, End, ObjectParams, QueryParams);
+	World->LineTraceMultiByObjectType(Hits, Start, ProbeEnd, ObjectParams, QueryParams);
 	TArray<FPDActionTarget>& OutTargets = OutResult.Targets;
 	TSet<TObjectPtr<AActor>> SeenActors;
 	for (const FHitResult& Hit : Hits)
 	{
+		// 탄을 막은 것이 이 대상 자신이면(차량) 거리를 비교하지 않는다. 같은 표면을 두
+		// 판정이 따로 재서 오차만큼 뒤에 나올 수 있다.
 		AActor* HitActor = Hit.GetActor();
+		const bool bBlockedByThisTarget = bObstructed && ObstructionHit.GetActor() == HitActor;
 		if (!IsValid(HitActor) || SeenActors.Contains(HitActor) ||
 			(TargetActorClass && !HitActor->IsA(TargetActorClass)) ||
-			FVector::DistSquared(Start, Hit.ImpactPoint) >
-				ObstructionDistanceSquared + UE_KINDA_SMALL_NUMBER)
+			(!bBlockedByThisTarget &&
+				FVector::DistSquared(Start, Hit.ImpactPoint) >
+					ObstructionDistanceSquared + UE_KINDA_SMALL_NUMBER))
 		{
 			continue;
 		}
@@ -225,26 +226,9 @@ bool UPDAimLineTraceTargeting::ResolveAimPoint(
 		return false;
 	}
 
-	OutAimRotation = SourceActor->GetActorRotation();
-	if (const APawn* SourcePawn = Cast<APawn>(SourceActor))
-	{
-		OutAimRotation = SourcePawn->GetBaseAimRotation();
-
-		// 3인칭 카메라는 캐릭터 뒤 위쪽에 있다. Controller 시점을 써야
-		// 화면 중앙이 가리키는 지점과 판정이 일치한다.
-		if (const AController* SourceController = SourcePawn->GetController())
-		{
-			SourceController->GetPlayerViewPoint(OutViewStart, OutAimRotation);
-		}
-		else
-		{
-			SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
-		}
-	}
-	else
-	{
-		SourceActor->GetActorEyesViewPoint(OutViewStart, OutAimRotation);
-	}
+	// 3인칭 카메라는 캐릭터 뒤 위쪽에 있다. Controller 시점을 써야
+	// 화면 중앙이 가리키는 지점과 판정이 일치한다.
+	PDViewPoint::GetActorViewPoint(*SourceActor, OutViewStart, OutAimRotation);
 
 	const FVector ViewEnd =
 		OutViewStart + OutAimRotation.Vector() * TraceDistance;
