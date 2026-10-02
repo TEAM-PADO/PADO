@@ -26,6 +26,7 @@ private:
 	void RegisterConsoleCommands();
 	void UnregisterConsoleCommands();
 	void ExecuteCreateCommand(const TArray<FString>& Arguments);
+	void ExecuteCreateProtectedCommand(const TArray<FString>& Arguments);
 	void ExecuteFindCommand(const TArray<FString>& Arguments);
 	void ExecuteJoinCommand(const TArray<FString>& Arguments);
 	void ExecuteDestroyCommand(const TArray<FString>& Arguments);
@@ -48,6 +49,7 @@ private:
 
 #if !UE_BUILD_SHIPPING
 	IConsoleObject* CreateCommand = nullptr;
+	IConsoleObject* CreateProtectedCommand = nullptr;
 	IConsoleObject* FindCommand = nullptr;
 	IConsoleObject* JoinCommand = nullptr;
 	IConsoleObject* DestroyCommand = nullptr;

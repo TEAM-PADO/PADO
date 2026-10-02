@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "PADO/SteamSession/Struct/PDRoomAccessSettings.h"
 #include "ReusableSessionTypes.h"
 #include "PDSteamSessionBlueprintLibrary.generated.h"
 
@@ -38,6 +39,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
 	static bool CreatePADOListenSession(const UObject* WorldContextObject, const FString& RoomName);
 
+	/** 호환용으로 입장 설정을 포함한 새 방 생성 요청을 Flow에 전달합니다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
+	static bool CreatePADOListenSessionWithAccessSettings(const UObject* WorldContextObject, const FString& RoomName, const FPDRoomAccessSettings& AccessSettings);
+
 	/** 호환용으로 공개 방 검색 요청을 RoomSessionFlowSubsystem에 전달합니다. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject", ClampMin = "1", ClampMax = "100"))
 	static bool FindPADOSessions(const UObject* WorldContextObject, int32 MaxResults = 50);
@@ -45,4 +50,8 @@ public:
 	/** 호환용으로 선택한 검색 결과 참가 요청을 RoomSessionFlowSubsystem에 전달합니다. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
 	static bool JoinPADOSession(const UObject* WorldContextObject, const FBlueprintSessionResult& Session);
+
+	/** 호환용으로 비밀번호를 포함한 참가 요청을 Flow에 전달합니다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
+	static bool JoinPADOSessionWithPassword(const UObject* WorldContextObject, const FBlueprintSessionResult& Session, const FString& Password);
 };

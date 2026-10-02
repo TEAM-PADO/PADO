@@ -43,6 +43,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "PADO|Save")
 	bool RequestRoomSave();
 
+	/**
+	 * 새 네트워크 연결이 PlayerController·PlayerState를 만들기 전에 방 입장 정책을 검증합니다.
+	 * FriendsOrPassword 방은 Steam 친구 또는 올바른 비밀번호가 아니면 여기서 거절합니다.
+	 */
+	virtual void PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage) override;
+
 protected:
 	/** 파생 GameMode Blueprint에서 지정하는 일반·보스 배달 정의 레지스트리입니다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PADO|Delivery")

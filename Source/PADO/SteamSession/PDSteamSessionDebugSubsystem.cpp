@@ -63,6 +63,11 @@ void UPDSteamSessionDebugSubsystem::RegisterConsoleCommands()
 		TEXT("Creates a PADO Steam listen session. Optional argument: room name."),
 		FConsoleCommandWithArgsDelegate::CreateUObject(this, &ThisClass::ExecuteCreateCommand),
 		ECVF_Default);
+	CreateProtectedCommand = ConsoleManager.RegisterConsoleCommand(
+		TEXT("PD.Steam.CreateProtected"),
+		TEXT("Creates a FriendsOrPassword PADO Steam listen session. Usage: PD.Steam.CreateProtected <Password> [RoomName]"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &ThisClass::ExecuteCreateProtectedCommand),
+		ECVF_Default);
 	FindCommand = ConsoleManager.RegisterConsoleCommand(
 		TEXT("PD.Steam.Find"),
 		TEXT("Finds public PADO Steam sessions and writes indexed results to LogPDSteamSession."),
@@ -87,6 +92,11 @@ void UPDSteamSessionDebugSubsystem::UnregisterConsoleCommands()
 	{
 		ConsoleManager.UnregisterConsoleObject(CreateCommand);
 		CreateCommand = nullptr;
+	}
+	if (CreateProtectedCommand)
+	{
+		ConsoleManager.UnregisterConsoleObject(CreateProtectedCommand);
+		CreateProtectedCommand = nullptr;
 	}
 	if (FindCommand)
 	{
@@ -119,6 +129,39 @@ void UPDSteamSessionDebugSubsystem::ExecuteCreateCommand(const TArray<FString>& 
 	}
 }
 
+void UPDSteamSessionDebugSubsystem::ExecuteCreateProtectedCommand(const TArray<FString>& Arguments)
+{
+	if (Arguments.IsEmpty())
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Usage: PD.Steam.CreateProtected <Password> [RoomName]."));
+		return;
+	}
+
+	FPDRoomAccessSettings AccessSettings;
+	AccessSettings.AccessPolicy = EPDRoomAccessPolicy::FriendsOrPassword;
+	AccessSettings.Password = Arguments[0];
+	FString RoomName;
+	for (int32 ArgumentIndex = 1; ArgumentIndex < Arguments.Num(); ++ArgumentIndex)
+	{
+		if (!RoomName.IsEmpty())
+		{
+			RoomName += TEXT(" ");
+		}
+
+		RoomName += Arguments[ArgumentIndex];
+	}
+
+	if (RoomName.IsEmpty())
+	{
+		RoomName = TEXT("PADO Protected Debug Room");
+	}
+
+	if (!UPDSteamSessionBlueprintLibrary::CreatePADOListenSessionWithAccessSettings(this, RoomName, AccessSettings))
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.CreateProtected could not start a Steam session request. Check prior log messages."));
+	}
+}
+
 void UPDSteamSessionDebugSubsystem::ExecuteFindCommand(const TArray<FString>&)
 {
 	LastFoundSessions.Reset();
@@ -130,9 +173,9 @@ void UPDSteamSessionDebugSubsystem::ExecuteFindCommand(const TArray<FString>&)
 
 void UPDSteamSessionDebugSubsystem::ExecuteJoinCommand(const TArray<FString>& Arguments)
 {
-	if (Arguments.Num() != 1)
+	if (Arguments.Num() < 1 || Arguments.Num() > 2)
 	{
-		UE_LOG(LogPDSteamSession, Error, TEXT("Usage: PD.Steam.Join <Index>. Run PD.Steam.Find first."));
+		UE_LOG(LogPDSteamSession, Error, TEXT("Usage: PD.Steam.Join <Index> [Password]. Run PD.Steam.Find first."));
 		return;
 	}
 
@@ -143,7 +186,8 @@ void UPDSteamSessionDebugSubsystem::ExecuteJoinCommand(const TArray<FString>& Ar
 		return;
 	}
 
-	if (!UPDSteamSessionBlueprintLibrary::JoinPADOSession(this, LastFoundSessions[SessionIndex]))
+	const FString Password = Arguments.Num() == 2 ? Arguments[1] : FString();
+	if (!UPDSteamSessionBlueprintLibrary::JoinPADOSessionWithPassword(this, LastFoundSessions[SessionIndex], Password))
 	{
 		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.Join could not start a Steam session join request. Check prior log messages."));
 	}
@@ -195,11 +239,11 @@ void UPDSteamSessionDebugSubsystem::HandleFindComplete(const bool bSuccess, cons
 	}
 }
 
-void UPDSteamSessionDebugSubsystem::HandleJoinComplete(const bool bSuccess, const FString& ConnectString)
+void UPDSteamSessionDebugSubsystem::HandleJoinComplete(const bool bSuccess, const FString&)
 {
 	if (bSuccess)
 	{
-		UE_LOG(LogPDSteamSession, Display, TEXT("Steam session join succeeded. ConnectString='%s'"), *ConnectString);
+		UE_LOG(LogPDSteamSession, Display, TEXT("Steam session join succeeded. Client travel started."));
 		return;
 	}
 

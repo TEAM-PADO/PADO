@@ -6,6 +6,21 @@
 #include "PADO/SteamSession/PDSteamSessionSettings.h"
 #include "ReusableSteamSessionSubsystem.h"
 
+namespace
+{
+	UGameInstance* GetGameInstanceFromWorldContext(const UObject* WorldContextObject)
+	{
+		const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+		return World ? World->GetGameInstance() : nullptr;
+	}
+
+	UPDRoomSessionFlowSubsystem* GetRoomSessionFlowSubsystem(const UObject* WorldContextObject)
+	{
+		UGameInstance* GameInstance = GetGameInstanceFromWorldContext(WorldContextObject);
+		return GameInstance ? GameInstance->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	}
+}
+
 UReusableSteamSessionSubsystem* UPDSteamSessionBlueprintLibrary::GetSteamSessionSubsystem(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject)
@@ -13,8 +28,7 @@ UReusableSteamSessionSubsystem* UPDSteamSessionBlueprintLibrary::GetSteamSession
 		return nullptr;
 	}
 
-	const UWorld* World = WorldContextObject->GetWorld();
-	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UGameInstance* GameInstance = GetGameInstanceFromWorldContext(WorldContextObject);
 	return GameInstance ? GameInstance->GetSubsystem<UReusableSteamSessionSubsystem>() : nullptr;
 }
 
@@ -36,9 +50,7 @@ bool UPDSteamSessionBlueprintLibrary::CreatePADOListenSession(const UObject* Wor
 		return false;
 	}
 
-	UWorld* World = WorldContextObject->GetWorld();
-	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
-	UPDRoomSessionFlowSubsystem* FlowSubsystem = GameInstance ? GameInstance->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
 	if (!FlowSubsystem)
 	{
 		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot create a Steam session because the room session flow subsystem is unavailable."));
@@ -46,6 +58,24 @@ bool UPDSteamSessionBlueprintLibrary::CreatePADOListenSession(const UObject* Wor
 	}
 
 	return FlowSubsystem->RequestCreateRoom(RoomName);
+}
+
+bool UPDSteamSessionBlueprintLibrary::CreatePADOListenSessionWithAccessSettings(const UObject* WorldContextObject, const FString& RoomName, const FPDRoomAccessSettings& AccessSettings)
+{
+	if (!WorldContextObject)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot create a Steam session because the world context is unavailable."));
+		return false;
+	}
+
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
+	if (!FlowSubsystem)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot create a Steam session because the room session flow subsystem is unavailable."));
+		return false;
+	}
+
+	return FlowSubsystem->RequestCreateRoomWithAccessSettings(RoomName, AccessSettings);
 }
 
 bool UPDSteamSessionBlueprintLibrary::FindPADOSessions(const UObject* WorldContextObject, const int32 MaxResults)
@@ -56,9 +86,7 @@ bool UPDSteamSessionBlueprintLibrary::FindPADOSessions(const UObject* WorldConte
 		return false;
 	}
 
-	UWorld* World = WorldContextObject->GetWorld();
-	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
-	UPDRoomSessionFlowSubsystem* FlowSubsystem = GameInstance ? GameInstance->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
 	if (!FlowSubsystem)
 	{
 		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot find Steam sessions because the room session flow subsystem is unavailable."));
@@ -76,9 +104,7 @@ bool UPDSteamSessionBlueprintLibrary::JoinPADOSession(const UObject* WorldContex
 		return false;
 	}
 
-	UWorld* World = WorldContextObject->GetWorld();
-	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
-	UPDRoomSessionFlowSubsystem* FlowSubsystem = GameInstance ? GameInstance->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
 	if (!FlowSubsystem)
 	{
 		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot join a Steam session because the room session flow subsystem is unavailable."));
@@ -86,4 +112,22 @@ bool UPDSteamSessionBlueprintLibrary::JoinPADOSession(const UObject* WorldContex
 	}
 
 	return FlowSubsystem->RequestJoinRoom(Session);
+}
+
+bool UPDSteamSessionBlueprintLibrary::JoinPADOSessionWithPassword(const UObject* WorldContextObject, const FBlueprintSessionResult& Session, const FString& Password)
+{
+	if (!WorldContextObject)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot join a Steam session because the world context is unavailable."));
+		return false;
+	}
+
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
+	if (!FlowSubsystem)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot join a Steam session because the room session flow subsystem is unavailable."));
+		return false;
+	}
+
+	return FlowSubsystem->RequestJoinRoomWithPassword(Session, Password);
 }

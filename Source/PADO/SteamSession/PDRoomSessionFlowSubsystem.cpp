@@ -2,16 +2,33 @@
 
 #include "PADO/SteamSession/PDRoomSessionFlowSubsystem.h"
 
+#include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/OnlineReplStructs.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 #include "GameMapsSettings.h"
+#include "Interfaces/OnlineFriendsInterface.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/Base64.h"
+#include "Misc/SecureHash.h"
+#include "OnlineSubsystem.h"
 #include "PADO/Core/PDGameMode.h"
 #include "PADO/PADO.h"
 #include "PADO/Save/PDRoomSaveSubsystem.h"
 #include "PADO/SteamSession/PDSteamSessionSettings.h"
 #include "ReusableSteamSessionSubsystem.h"
+
+namespace PDRoomSessionFlow
+{
+	FString CalculatePasswordHash(const FString& Password)
+	{
+		const FTCHARToUTF8 PasswordUtf8(*Password);
+		const FSHAHash PasswordHash = FSHA1::HashBuffer(PasswordUtf8.Get(), PasswordUtf8.Length());
+		return PasswordHash.ToString();
+	}
+}
 
 void UPDRoomSessionFlowSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -33,6 +50,14 @@ void UPDRoomSessionFlowSubsystem::Initialize(FSubsystemCollectionBase& Collectio
 		SessionSubsystem->OnInviteAccepted.AddUniqueDynamic(this, &ThisClass::HandleSteamInviteAccepted);
 		SessionSubsystem->OnDestroyComplete.AddUniqueDynamic(this, &ThisClass::HandleSessionDestroyCompleted);
 	}
+
+	if (GEngine)
+	{
+		NetworkFailureHandle = GEngine->OnNetworkFailure().AddWeakLambda(this, [this](UWorld*, UNetDriver*, auto, const FString& Error)
+		{
+			HandleJoinNetworkFailure(Error);
+		});
+	}
 }
 
 void UPDRoomSessionFlowSubsystem::Deinitialize()
@@ -51,16 +76,44 @@ void UPDRoomSessionFlowSubsystem::Deinitialize()
 		SessionSubsystem->OnDestroyComplete.RemoveDynamic(this, &ThisClass::HandleSessionDestroyCompleted);
 	}
 
+	if (GEngine && NetworkFailureHandle.IsValid())
+	{
+		GEngine->OnNetworkFailure().Remove(NetworkFailureHandle);
+		NetworkFailureHandle.Reset();
+	}
+
 	bHostExitRequest = false;
+	bClientJoinTravelInProgress = false;
+	PendingJoinEncodedPassword.Reset();
+	PendingRoomName.Reset();
+	ClearActiveRoomAccess();
 	FlowState = EPDRoomSessionFlowState::Idle;
 	Super::Deinitialize();
 }
 
 bool UPDRoomSessionFlowSubsystem::RequestCreateRoom(const FString& RoomName)
 {
+	return RequestCreateRoomInternal(RoomName, FPDRoomAccessSettings());
+}
+
+bool UPDRoomSessionFlowSubsystem::RequestCreateRoomWithAccessSettings(const FString& RoomName, const FPDRoomAccessSettings& AccessSettings)
+{
+	return RequestCreateRoomInternal(RoomName, AccessSettings);
+}
+
+bool UPDRoomSessionFlowSubsystem::RequestCreateRoomInternal(const FString& RoomName, const FPDRoomAccessSettings& AccessSettings)
+{
 	if (IsFlowOperationInProgress())
 	{
 		UE_LOG(LogPDSteamSession, Warning, TEXT("Room creation request was ignored because another room flow operation is in progress."));
+		return false;
+	}
+
+	FString AccessError;
+	if (!ConfigureActiveRoomAccess(AccessSettings, AccessError))
+	{
+		UE_LOG(LogPDSteamSession, Warning, TEXT("Cannot create a room because the access settings are invalid: %s"), *AccessError);
+		CompleteCreate(false, AccessError);
 		return false;
 	}
 
@@ -82,6 +135,11 @@ bool UPDRoomSessionFlowSubsystem::RequestCreateRoom(const FString& RoomName)
 		UE_LOG(LogPDServer, Error, TEXT("Cannot create a room: %s"), *Error);
 		CompleteCreate(false, Error);
 		return false;
+	}
+
+	if (ActiveRoomAccessPolicy == EPDRoomAccessPolicy::FriendsOrPassword)
+	{
+		return BeginHostFriendsListRead(TrimmedRoomName);
 	}
 
 	return StartSteamSessionCreation(TrimmedRoomName);
@@ -112,11 +170,36 @@ bool UPDRoomSessionFlowSubsystem::RequestFindRooms(const int32 MaxResults)
 
 bool UPDRoomSessionFlowSubsystem::RequestJoinRoom(const FBlueprintSessionResult& Session)
 {
+	return RequestJoinRoomInternal(Session, FString());
+}
+
+bool UPDRoomSessionFlowSubsystem::RequestJoinRoomWithPassword(const FBlueprintSessionResult& Session, const FString& Password)
+{
+	return RequestJoinRoomInternal(Session, Password);
+}
+
+bool UPDRoomSessionFlowSubsystem::RequestJoinRoomInternal(const FBlueprintSessionResult& Session, const FString& Password)
+{
 	if (IsFlowOperationInProgress())
 	{
 		UE_LOG(LogPDSteamSession, Warning, TEXT("Room join request was ignored because another room flow operation is in progress."));
 		return false;
 	}
+
+	LastJoinConnectionError.Reset();
+	bClientJoinTravelInProgress = false;
+	if (!Password.IsEmpty())
+	{
+		FString PasswordError;
+		if (!FPDRoomAccessSettings::ValidatePassword(Password, PasswordError))
+		{
+			UE_LOG(LogPDSteamSession, Warning, TEXT("Room join request was rejected because the submitted access code is invalid: %s"), *PasswordError);
+			CompleteJoin(false, PasswordError);
+			return false;
+		}
+	}
+
+	PendingJoinEncodedPassword = Password.IsEmpty() ? FString() : FBase64::Encode(Password, EBase64Mode::UrlSafe);
 
 	UReusableSteamSessionSubsystem* SessionSubsystem = GetSteamSessionSubsystem();
 	if (!SessionSubsystem)
@@ -152,6 +235,7 @@ bool UPDRoomSessionFlowSubsystem::RequestReturnToMainMenu()
 	bHostExitRequest = GetHostingGameMode() != nullptr;
 	if (!bHostExitRequest)
 	{
+		bClientJoinTravelInProgress = false;
 		BeginSessionDestruction();
 		return true;
 	}
@@ -210,6 +294,90 @@ FString UPDRoomSessionFlowSubsystem::GetMainMenuMapPackageName() const
 	return LongPackageName.IsEmpty() ? MainMenuMap : LongPackageName;
 }
 
+bool UPDRoomSessionFlowSubsystem::ConfigureActiveRoomAccess(const FPDRoomAccessSettings& AccessSettings, FString& OutError)
+{
+	OutError.Reset();
+	if (!AccessSettings.Validate(OutError))
+	{
+		return false;
+	}
+
+	ClearActiveRoomAccess();
+	ActiveRoomAccessPolicy = AccessSettings.AccessPolicy;
+	if (ActiveRoomAccessPolicy == EPDRoomAccessPolicy::FriendsOrPassword)
+	{
+		ActiveRoomPasswordHash = PDRoomSessionFlow::CalculatePasswordHash(AccessSettings.Password);
+	}
+
+	return true;
+}
+
+void UPDRoomSessionFlowSubsystem::ClearActiveRoomAccess()
+{
+	ActiveRoomAccessPolicy = EPDRoomAccessPolicy::Public;
+	ActiveRoomPasswordHash.Reset();
+	bHostFriendsListReady = false;
+}
+
+bool UPDRoomSessionFlowSubsystem::BeginHostFriendsListRead(const FString& RoomName)
+{
+	PendingRoomName = RoomName;
+	bHostFriendsListReady = false;
+
+	IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get();
+	IOnlineFriendsPtr FriendsInterface = OnlineSubsystem ? OnlineSubsystem->GetFriendsInterface() : nullptr;
+	ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr;
+	if (!FriendsInterface.IsValid() || !LocalPlayer)
+	{
+		UE_LOG(LogPDSteamSession, Warning, TEXT("Steam friends are unavailable. FriendsOrPassword rooms will temporarily require the password."));
+		PendingRoomName.Reset();
+		return StartSteamSessionCreation(RoomName);
+	}
+
+	SetFlowState(EPDRoomSessionFlowState::PreparingNewRoom);
+	const bool bReadStarted = FriendsInterface->ReadFriendsList(
+		LocalPlayer->GetControllerId(),
+		EFriendsLists::ToString(EFriendsLists::Default),
+		FOnReadFriendsListComplete::CreateUObject(this, &ThisClass::HandleHostFriendsListRead));
+	if (bReadStarted)
+	{
+		return true;
+	}
+
+	UE_LOG(LogPDSteamSession, Warning, TEXT("Steam friends list read could not start. FriendsOrPassword rooms will temporarily require the password."));
+	PendingRoomName.Reset();
+	return StartSteamSessionCreation(RoomName);
+}
+
+bool UPDRoomSessionFlowSubsystem::IsEncodedRoomAccessPasswordValid(const FString& EncodedPassword) const
+{
+	if (ActiveRoomAccessPolicy != EPDRoomAccessPolicy::FriendsOrPassword || ActiveRoomPasswordHash.IsEmpty())
+	{
+		return false;
+	}
+
+	FString Password;
+	FString PasswordError;
+	return FBase64::Decode(EncodedPassword, Password, EBase64Mode::UrlSafe) &&
+		FPDRoomAccessSettings::ValidatePassword(Password, PasswordError) &&
+		PDRoomSessionFlow::CalculatePasswordHash(Password).Equals(ActiveRoomPasswordHash, ESearchCase::CaseSensitive);
+}
+
+bool UPDRoomSessionFlowSubsystem::IsIncomingPlayerSteamFriend(const FUniqueNetIdRepl& PlayerId) const
+{
+	if (!bHostFriendsListReady || !PlayerId.IsValid())
+	{
+		return false;
+	}
+
+	const FUniqueNetIdPtr IncomingPlayerId = PlayerId.GetUniqueNetId();
+	IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get();
+	IOnlineFriendsPtr FriendsInterface = OnlineSubsystem ? OnlineSubsystem->GetFriendsInterface() : nullptr;
+	ULocalPlayer* LocalPlayer = GetGameInstance() ? GetGameInstance()->GetFirstGamePlayer() : nullptr;
+	return IncomingPlayerId.IsValid() && FriendsInterface.IsValid() && LocalPlayer &&
+		FriendsInterface->IsFriend(LocalPlayer->GetControllerId(), *IncomingPlayerId, EFriendsLists::ToString(EFriendsLists::Default));
+}
+
 bool UPDRoomSessionFlowSubsystem::StartSteamSessionCreation(const FString& RoomName)
 {
 	UReusableSteamSessionSubsystem* SessionSubsystem = GetSteamSessionSubsystem();
@@ -239,6 +407,11 @@ bool UPDRoomSessionFlowSubsystem::StartSteamSessionCreation(const FString& RoomN
 void UPDRoomSessionFlowSubsystem::CompleteCreate(const bool bSuccess, const FString& Error)
 {
 	PendingListenServerMap.Reset();
+	PendingRoomName.Reset();
+	if (!bSuccess)
+	{
+		ClearActiveRoomAccess();
+	}
 	SetFlowState(EPDRoomSessionFlowState::Idle);
 	OnRoomCreateCompleted.Broadcast(bSuccess, Error);
 }
@@ -251,6 +424,11 @@ void UPDRoomSessionFlowSubsystem::CompleteFind(const bool bSuccess, const TArray
 
 void UPDRoomSessionFlowSubsystem::CompleteJoin(const bool bSuccess, const FString& ConnectStringOrError)
 {
+	PendingJoinEncodedPassword.Reset();
+	if (!bSuccess)
+	{
+		bClientJoinTravelInProgress = false;
+	}
 	SetFlowState(EPDRoomSessionFlowState::Idle);
 	OnRoomJoinCompleted.Broadcast(bSuccess, ConnectStringOrError);
 }
@@ -291,6 +469,8 @@ void UPDRoomSessionFlowSubsystem::ReturnToMainMenu()
 		{
 			SaveSubsystem->ClearActiveRoomContext();
 		}
+
+		ClearActiveRoomAccess();
 	}
 	else
 	{
@@ -401,9 +581,16 @@ void UPDRoomSessionFlowSubsystem::HandleSessionJoinCompleted(const bool bSuccess
 		return;
 	}
 
+	FString TravelConnectString = ConnectStringOrError;
+	if (!PendingJoinEncodedPassword.IsEmpty())
+	{
+		TravelConnectString += FString::Printf(TEXT("?%s=%s"), PDRoomAccessOptions::PasswordKey, *PendingJoinEncodedPassword);
+	}
+
 	SetFlowState(EPDRoomSessionFlowState::TravellingToGame);
-	PlayerController->ClientTravel(ConnectStringOrError, ETravelType::TRAVEL_Absolute);
-	UE_LOG(LogPDSteamSession, Log, TEXT("Steam room join succeeded. Starting client travel. ConnectString='%s'"), *ConnectStringOrError);
+	bClientJoinTravelInProgress = true;
+	PlayerController->ClientTravel(TravelConnectString, ETravelType::TRAVEL_Absolute);
+	UE_LOG(LogPDSteamSession, Log, TEXT("Steam room join succeeded. Starting client travel."));
 	CompleteJoin(true, ConnectStringOrError);
 }
 
@@ -415,6 +602,9 @@ void UPDRoomSessionFlowSubsystem::HandleSteamInviteAccepted(const FBlueprintSess
 		return;
 	}
 
+	LastJoinConnectionError.Reset();
+	PendingJoinEncodedPassword.Reset();
+	bClientJoinTravelInProgress = false;
 	SetFlowState(EPDRoomSessionFlowState::JoiningSteamSession);
 	OnRoomInviteAccepted.Broadcast();
 	UE_LOG(LogPDSteamSession, Log, TEXT("Steam invite accepted. Waiting for the invite session join result."));
@@ -434,4 +624,44 @@ void UPDRoomSessionFlowSubsystem::HandleSessionDestroyCompleted(const bool bSucc
 	}
 
 	ReturnToMainMenu();
+}
+
+void UPDRoomSessionFlowSubsystem::HandleHostFriendsListRead(const int32, const bool bSuccess, const FString&, const FString& Error)
+{
+	if (FlowState != EPDRoomSessionFlowState::PreparingNewRoom || PendingRoomName.IsEmpty())
+	{
+		return;
+	}
+
+	bHostFriendsListReady = bSuccess;
+	if (!bSuccess)
+	{
+		UE_LOG(LogPDSteamSession, Warning, TEXT("Steam friends list read failed. FriendsOrPassword rooms will temporarily require the password. Error=%s"), *Error);
+	}
+
+	const FString RoomName = MoveTemp(PendingRoomName);
+	StartSteamSessionCreation(RoomName);
+}
+
+void UPDRoomSessionFlowSubsystem::HandleJoinNetworkFailure(const FString& Error)
+{
+	if (!bClientJoinTravelInProgress)
+	{
+		return;
+	}
+
+	bClientJoinTravelInProgress = false;
+	LastJoinConnectionError = Error.IsEmpty() ? TEXT("The connection to the room failed.") : Error;
+	SetFlowState(EPDRoomSessionFlowState::Idle);
+	OnRoomJoinConnectionFailed.Broadcast(LastJoinConnectionError);
+	UE_LOG(LogPDSteamSession, Warning, TEXT("Room connection failed after Steam session join: %s"), *LastJoinConnectionError);
+
+	const FString MainMenuMap = GetMainMenuMapPackageName();
+	if (MainMenuMap.IsEmpty())
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("The client could not return to the main menu because the default main menu map is not configured."));
+		return;
+	}
+
+	UGameplayStatics::OpenLevel(this, FName(*MainMenuMap));
 }

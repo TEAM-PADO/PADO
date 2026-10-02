@@ -4,8 +4,10 @@
 #include "PADO/Delivery/Definition/PDDeliveryDefinitionSet.h"
 #include "PADO/PADO.h"
 #include "PADO/Save/PDRoomSaveSubsystem.h"
+#include "PADO/SteamSession/PDRoomSessionFlowSubsystem.h"
 
 #include "PADO/Character/PDPlayerState.h"
+#include "Kismet/GameplayStatics.h"
 
 APDGameMode::APDGameMode()
 {
@@ -94,6 +96,38 @@ bool APDGameMode::RequestRoomSave()
 	}
 
 	return SaveSubsystem->SaveActiveRoom(PersistentState);
+}
+
+void APDGameMode::PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage)
+{
+	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
+	if (!ErrorMessage.IsEmpty())
+	{
+		return;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GameInstance ? GameInstance->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	if (!FlowSubsystem || FlowSubsystem->GetActiveRoomAccessPolicy() == EPDRoomAccessPolicy::Public)
+	{
+		return;
+	}
+
+	if (FlowSubsystem->IsIncomingPlayerSteamFriend(UniqueId))
+	{
+		UE_LOG(LogPDServer, Log, TEXT("Room access accepted for a Steam friend."));
+		return;
+	}
+
+	const FString EncodedPassword = UGameplayStatics::ParseOption(Options, PDRoomAccessOptions::PasswordKey);
+	if (FlowSubsystem->IsEncodedRoomAccessPasswordValid(EncodedPassword))
+	{
+		UE_LOG(LogPDServer, Log, TEXT("Room access accepted with a valid password."));
+		return;
+	}
+
+	ErrorMessage = TEXT("PADO_ROOM_ACCESS_DENIED");
+	UE_LOG(LogPDServer, Warning, TEXT("Room access was denied before player controller and player state creation."));
 }
 
 void APDGameMode::BeginPlay()
