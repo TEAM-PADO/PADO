@@ -17,7 +17,7 @@ public:
 	/**
 	 * PADO 전용 GameState 클래스 등록
 	 */
-	explicit APDGameMode(const FObjectInitializer& ObjectInitializer);
+	APDGameMode();
 
 	/** @return 일반·보스 배달 정의를 조회하는 코어 레지스트리입니다. 설정되지 않으면 nullptr입니다. */
 	UFUNCTION(BlueprintPure, Category = "PADO|Delivery")
