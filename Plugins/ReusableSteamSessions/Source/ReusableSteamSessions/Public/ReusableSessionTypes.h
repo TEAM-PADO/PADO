@@ -32,9 +32,6 @@ struct FReusableSessionSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Session")
 	bool bUseLobbiesIfAvailable = true;
 
-	/** Optional level path/name. When set, the host travels to this map with ?listen after creation. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Session|Travel")
-	FString ListenServerMap;
 };
 
 USTRUCT(BlueprintType)

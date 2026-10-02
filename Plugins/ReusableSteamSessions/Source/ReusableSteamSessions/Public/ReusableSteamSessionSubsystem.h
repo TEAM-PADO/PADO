@@ -41,6 +41,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Steam Sessions")
 	bool IsCurrentSessionFull() const;
 
+	/** @return true if this local process has an active named game session. */
+	UFUNCTION(BlueprintPure, Category = "Steam Sessions")
+	bool HasActiveSession() const;
+
 	UPROPERTY(BlueprintAssignable, Category = "Steam Sessions|Events")
 	FReusableSessionOperationComplete OnCreateComplete;
 	UPROPERTY(BlueprintAssignable, Category = "Steam Sessions|Events")

@@ -13,6 +13,7 @@ public class PADO : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"EngineSettings",
 			"InputCore",
 			"EnhancedInput",
 

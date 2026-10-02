@@ -1,9 +1,7 @@
 #include "ReusableSteamSessionSubsystem.h"
 
 #include "Engine/LocalPlayer.h"
-#include "GameFramework/PlayerController.h"
 #include "Interfaces/OnlineIdentityInterface.h"
-#include "Kismet/GameplayStatics.h"
 #include "Misc/Base64.h"
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
@@ -242,16 +240,14 @@ bool UReusableSteamSessionSubsystem::IsCurrentSessionFull() const
 	return Session && Session->NumOpenPublicConnections <= 0;
 }
 
+bool UReusableSteamSessionSubsystem::HasActiveSession() const
+{
+	return SessionInterface.IsValid() && SessionInterface->GetNamedSession(NAME_GameSession) != nullptr;
+}
+
 void UReusableSteamSessionSubsystem::HandleCreateComplete(FName, const bool bSuccess)
 {
 	Operation = EOperation::None;
-	if (bSuccess && !PendingCreateSettings.ListenServerMap.TrimStartAndEnd().IsEmpty())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			World->ServerTravel(PendingCreateSettings.ListenServerMap.TrimStartAndEnd() + TEXT("?listen"));
-		}
-	}
 	OnCreateComplete.Broadcast(bSuccess, bSuccess ? FString() : TEXT("The online subsystem failed to create the session."));
 }
 
@@ -261,10 +257,6 @@ void UReusableSteamSessionSubsystem::HandleJoinComplete(FName SessionName, const
 	FString ConnectString;
 	if (Result == EOnJoinSessionCompleteResult::Success && SessionInterface->GetResolvedConnectString(SessionName, ConnectString))
 	{
-		if (APlayerController* PlayerController = GetGameInstance()->GetFirstLocalPlayerController())
-		{
-			PlayerController->ClientTravel(ConnectString, ETravelType::TRAVEL_Absolute);
-		}
 		OnJoinComplete.Broadcast(true, ConnectString);
 		return;
 	}

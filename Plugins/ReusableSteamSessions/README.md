@@ -20,7 +20,7 @@ SteamDevAppId=480
 
 4. In Blueprint, call `Get Game Instance Subsystem` for `ReusableSteamSessionSubsystem`, bind its events once, then call the desired operation.
 
-Set a unique `ProductId` (for example, `com.studio.mygame`) on both Create and Find. This is required to avoid seeing unrelated games while using Steam's shared test App ID 480. Set `ListenServerMap` if creation should automatically travel to that map with `?listen`; otherwise perform your own server travel when `OnCreateComplete` succeeds.
+Set a unique `ProductId` (for example, `com.studio.mygame`) on both Create and Find. This is required to avoid seeing unrelated games while using Steam's shared test App ID 480. The plugin intentionally does not travel maps; the consuming project should perform host `ServerTravel` after `OnCreateComplete` and client `ClientTravel` after a successful `OnJoinComplete`.
 
 ## Safety behavior
 

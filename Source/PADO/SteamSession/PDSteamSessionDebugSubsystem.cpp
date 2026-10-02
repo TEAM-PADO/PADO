@@ -2,6 +2,7 @@
 
 #include "HAL/IConsoleManager.h"
 #include "PADO/PADO.h"
+#include "PADO/SteamSession/PDRoomSessionFlowSubsystem.h"
 #include "PADO/SteamSession/PDSteamSessionBlueprintLibrary.h"
 #include "ReusableSteamSessionSubsystem.h"
 
@@ -150,13 +151,16 @@ void UPDSteamSessionDebugSubsystem::ExecuteJoinCommand(const TArray<FString>& Ar
 
 void UPDSteamSessionDebugSubsystem::ExecuteDestroyCommand(const TArray<FString>&)
 {
-	if (UReusableSteamSessionSubsystem* SessionSubsystem = GetSessionSubsystem())
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetGameInstance() ? GetGameInstance()->GetSubsystem<UPDRoomSessionFlowSubsystem>() : nullptr;
+	if (!FlowSubsystem)
 	{
-		SessionSubsystem->DestroySession();
+		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.Destroy could not find the room session flow subsystem."));
+		return;
 	}
-	else
+
+	if (!FlowSubsystem->RequestReturnToMainMenu())
 	{
-		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.Destroy could not find the Steam session subsystem."));
+		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.Destroy could not start the room exit flow. Check prior log messages."));
 	}
 }
 
