@@ -131,3 +131,21 @@ bool UPDSteamSessionBlueprintLibrary::JoinPADOSessionWithPassword(const UObject*
 
 	return FlowSubsystem->RequestJoinRoomWithPassword(Session, Password);
 }
+
+bool UPDSteamSessionBlueprintLibrary::JoinPendingPADOSteamInviteWithPassword(const UObject* WorldContextObject, const FString& Password)
+{
+	if (!WorldContextObject)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot join an invited Steam session because the world context is unavailable."));
+		return false;
+	}
+
+	UPDRoomSessionFlowSubsystem* FlowSubsystem = GetRoomSessionFlowSubsystem(WorldContextObject);
+	if (!FlowSubsystem)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Cannot join an invited Steam session because the room session flow subsystem is unavailable."));
+		return false;
+	}
+
+	return FlowSubsystem->RequestJoinPendingSteamInviteWithPassword(Password);
+}

@@ -65,8 +65,13 @@ void UPDSteamSessionDebugSubsystem::RegisterConsoleCommands()
 		ECVF_Default);
 	CreateProtectedCommand = ConsoleManager.RegisterConsoleCommand(
 		TEXT("PD.Steam.CreateProtected"),
-		TEXT("Creates a FriendsOrPassword PADO Steam listen session. Usage: PD.Steam.CreateProtected <Password> [RoomName]"),
+		TEXT("Creates a password-only PADO Steam listen session. Usage: PD.Steam.CreateProtected <Password> [RoomName]"),
 		FConsoleCommandWithArgsDelegate::CreateUObject(this, &ThisClass::ExecuteCreateProtectedCommand),
+		ECVF_Default);
+	JoinInviteCommand = ConsoleManager.RegisterConsoleCommand(
+		TEXT("PD.Steam.JoinInvite"),
+		TEXT("Joins a Steam Overlay invitation after entering its access code. Usage: PD.Steam.JoinInvite <Password>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &ThisClass::ExecuteJoinInviteCommand),
 		ECVF_Default);
 	FindCommand = ConsoleManager.RegisterConsoleCommand(
 		TEXT("PD.Steam.Find"),
@@ -75,7 +80,7 @@ void UPDSteamSessionDebugSubsystem::RegisterConsoleCommands()
 		ECVF_Default);
 	JoinCommand = ConsoleManager.RegisterConsoleCommand(
 		TEXT("PD.Steam.Join"),
-		TEXT("Joins a session index returned by PD.Steam.Find. Usage: PD.Steam.Join <Index>"),
+		TEXT("Joins a session index returned by PD.Steam.Find. Usage: PD.Steam.Join <Index> [Password]"),
 		FConsoleCommandWithArgsDelegate::CreateUObject(this, &ThisClass::ExecuteJoinCommand),
 		ECVF_Default);
 	DestroyCommand = ConsoleManager.RegisterConsoleCommand(
@@ -97,6 +102,11 @@ void UPDSteamSessionDebugSubsystem::UnregisterConsoleCommands()
 	{
 		ConsoleManager.UnregisterConsoleObject(CreateProtectedCommand);
 		CreateProtectedCommand = nullptr;
+	}
+	if (JoinInviteCommand)
+	{
+		ConsoleManager.UnregisterConsoleObject(JoinInviteCommand);
+		JoinInviteCommand = nullptr;
 	}
 	if (FindCommand)
 	{
@@ -138,7 +148,7 @@ void UPDSteamSessionDebugSubsystem::ExecuteCreateProtectedCommand(const TArray<F
 	}
 
 	FPDRoomAccessSettings AccessSettings;
-	AccessSettings.AccessPolicy = EPDRoomAccessPolicy::FriendsOrPassword;
+	AccessSettings.AccessPolicy = EPDRoomAccessPolicy::PasswordOnly;
 	AccessSettings.Password = Arguments[0];
 	FString RoomName;
 	for (int32 ArgumentIndex = 1; ArgumentIndex < Arguments.Num(); ++ArgumentIndex)
@@ -159,6 +169,20 @@ void UPDSteamSessionDebugSubsystem::ExecuteCreateProtectedCommand(const TArray<F
 	if (!UPDSteamSessionBlueprintLibrary::CreatePADOListenSessionWithAccessSettings(this, RoomName, AccessSettings))
 	{
 		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.CreateProtected could not start a Steam session request. Check prior log messages."));
+	}
+}
+
+void UPDSteamSessionDebugSubsystem::ExecuteJoinInviteCommand(const TArray<FString>& Arguments)
+{
+	if (Arguments.Num() != 1)
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("Usage: PD.Steam.JoinInvite <Password>. Accept a Steam Overlay invite first."));
+		return;
+	}
+
+	if (!UPDSteamSessionBlueprintLibrary::JoinPendingPADOSteamInviteWithPassword(this, Arguments[0]))
+	{
+		UE_LOG(LogPDSteamSession, Error, TEXT("PD.Steam.JoinInvite could not start invited room joining. Check prior log messages."));
 	}
 }
 

@@ -54,4 +54,8 @@ public:
 	/** 호환용으로 비밀번호를 포함한 참가 요청을 Flow에 전달합니다. */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
 	static bool JoinPADOSessionWithPassword(const UObject* WorldContextObject, const FBlueprintSessionResult& Session, const FString& Password);
+
+	/** Steam Overlay 초대 수락 뒤 대기 중인 방에 비밀번호를 제출해 참가합니다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Steam Session", meta = (WorldContext = "WorldContextObject"))
+	static bool JoinPendingPADOSteamInviteWithPassword(const UObject* WorldContextObject, const FString& Password);
 };

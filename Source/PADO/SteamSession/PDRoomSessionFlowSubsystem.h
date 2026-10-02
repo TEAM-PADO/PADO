@@ -44,7 +44,7 @@ public:
 
 	/**
 	 * 지정한 입장 설정으로 새 방 생성 요청을 시작합니다.
-	 * FriendsOrPassword 방의 비밀번호는 현재 실행 중인 호스트에만 보관하며 영속 저장하지 않습니다.
+	 * PasswordOnly 방의 비밀번호는 현재 실행 중인 호스트에만 보관하며 영속 저장하지 않습니다.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Room Session Flow")
 	bool RequestCreateRoomWithAccessSettings(const FString& RoomName, const FPDRoomAccessSettings& AccessSettings);
@@ -63,6 +63,14 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "PADO|Room Session Flow")
 	bool RequestJoinRoomWithPassword(const FBlueprintSessionResult& Session, const FString& Password);
+
+	/** Steam Overlay 초대 수락으로 대기 중인 방에 비밀번호를 제출해 참가합니다. */
+	UFUNCTION(BlueprintCallable, Category = "PADO|Room Session Flow")
+	bool RequestJoinPendingSteamInviteWithPassword(const FString& Password);
+
+	/** @return Steam Overlay 초대 수락 뒤 비밀번호 입력을 기다리는 방이 있으면 true입니다. */
+	UFUNCTION(BlueprintPure, Category = "PADO|Room Session Flow")
+	bool HasPendingSteamInvite() const { return bHasPendingSteamInvite; }
 
 	/**
 	 * 현재 방에서 나가고 메인 메뉴로 돌아가도록 요청합니다.
@@ -92,8 +100,6 @@ public:
 	/** 서버 GameMode가 PreLogin에서 전달된 인코딩 비밀번호를 검증할 때 사용합니다. */
 	bool IsEncodedRoomAccessPasswordValid(const FString& EncodedPassword) const;
 
-	/** 서버 GameMode가 Steam 친구 목록 캐시를 이용해 참가자를 검증할 때 사용합니다. */
-	bool IsIncomingPlayerSteamFriend(const FUniqueNetIdRepl& PlayerId) const;
 
 	/** 방 흐름 단계가 바뀔 때 발생합니다. UI는 이 이벤트로 입력을 잠글 수 있습니다. */
 	UPROPERTY(BlueprintAssignable, Category = "PADO|Room Session Flow|Events")
@@ -132,7 +138,6 @@ private:
 	bool RequestJoinRoomInternal(const FBlueprintSessionResult& Session, const FString& Password);
 	bool ConfigureActiveRoomAccess(const FPDRoomAccessSettings& AccessSettings, FString& OutError);
 	void ClearActiveRoomAccess();
-	bool BeginHostFriendsListRead(const FString& RoomName);
 	bool StartSteamSessionCreation(const FString& RoomName);
 	void CompleteCreate(bool bSuccess, const FString& Error);
 	void CompleteFind(bool bSuccess, const TArray<FReusableSessionEntry>& Sessions);
@@ -160,7 +165,6 @@ private:
 	UFUNCTION()
 	void HandleSessionDestroyCompleted(bool bSuccess, const FString& Error);
 
-	void HandleHostFriendsListRead(int32 LocalUserNum, bool bSuccess, const FString& ListName, const FString& Error);
 	void HandleJoinNetworkFailure(const FString& Error);
 
 	/** 현재 요청이 호스트 종료인지 여부입니다. */
@@ -169,20 +173,18 @@ private:
 	/** 생성 성공 뒤 호스트가 이동할 인게임 맵의 긴 패키지 경로입니다. */
 	FString PendingListenServerMap;
 
-	/** 친구 목록을 읽은 뒤 Steam 세션 생성을 재개할 방 이름입니다. */
-	FString PendingRoomName;
-
 	/** Steam 연결 URL에만 넣는 Base64 URL-safe 형식의 참가 비밀번호입니다. */
 	FString PendingJoinEncodedPassword;
 
-	/** FriendsOrPassword 방의 서버 전용 비밀번호 해시입니다. */
+	/** PasswordOnly 방의 서버 전용 비밀번호 해시입니다. */
 	FString ActiveRoomPasswordHash;
 
 	/** 현재 호스트 방의 접근 규칙입니다. */
 	EPDRoomAccessPolicy ActiveRoomAccessPolicy = EPDRoomAccessPolicy::Public;
 
-	/** 호스트 Steam 친구 목록을 성공적으로 읽었는지 여부입니다. */
-	bool bHostFriendsListReady = false;
+	/** Steam Overlay 초대를 수락한 뒤 비밀번호 입력을 기다리는 세션입니다. */
+	FBlueprintSessionResult PendingInviteSession;
+	bool bHasPendingSteamInvite = false;
 
 	/** Steam 참가 뒤 실제 서버 연결 결과를 기다리는 중인지 여부입니다. */
 	bool bClientJoinTravelInProgress = false;

@@ -6,7 +6,7 @@ bool FPDRoomAccessSettings::Validate(FString& OutError) const
 {
 	OutError.Reset();
 
-	if (AccessPolicy != EPDRoomAccessPolicy::FriendsOrPassword)
+	if (AccessPolicy != EPDRoomAccessPolicy::PasswordOnly)
 	{
 		return true;
 	}

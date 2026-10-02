@@ -113,12 +113,6 @@ void APDGameMode::PreLogin(const FString& Options, const FString& Address, const
 		return;
 	}
 
-	if (FlowSubsystem->IsIncomingPlayerSteamFriend(UniqueId))
-	{
-		UE_LOG(LogPDServer, Log, TEXT("Room access accepted for a Steam friend."));
-		return;
-	}
-
 	const FString EncodedPassword = UGameplayStatics::ParseOption(Options, PDRoomAccessOptions::PasswordKey);
 	if (FlowSubsystem->IsEncodedRoomAccessPasswordValid(EncodedPassword))
 	{

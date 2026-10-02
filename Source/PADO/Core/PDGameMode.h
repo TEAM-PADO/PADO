@@ -45,7 +45,7 @@ public:
 
 	/**
 	 * 새 네트워크 연결이 PlayerController·PlayerState를 만들기 전에 방 입장 정책을 검증합니다.
-	 * FriendsOrPassword 방은 Steam 친구 또는 올바른 비밀번호가 아니면 여기서 거절합니다.
+	 * PasswordOnly 방은 올바른 비밀번호가 아니면 여기서 거절합니다.
 	 */
 	virtual void PreLogin(const FString& Options, const FString& Address, const FUniqueNetIdRepl& UniqueId, FString& ErrorMessage) override;
 

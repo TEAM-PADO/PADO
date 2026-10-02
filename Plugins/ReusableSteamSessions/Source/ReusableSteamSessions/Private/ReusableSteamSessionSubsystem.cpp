@@ -316,7 +316,6 @@ void UReusableSteamSessionSubsystem::HandleInviteAccepted(const bool bSuccess, i
 	FBlueprintSessionResult BlueprintResult;
 	BlueprintResult.OnlineResult = Result;
 	OnInviteAccepted.Broadcast(BlueprintResult);
-	JoinSession(BlueprintResult);
 }
 
 void UReusableSteamSessionSubsystem::FailCreate(const FString& Error) { OnCreateComplete.Broadcast(false, Error); }

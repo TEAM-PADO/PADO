@@ -15,6 +15,6 @@ enum class EPDRoomAccessPolicy : uint8
 	/** 모든 Steam 사용자가 세션 목록 또는 초대를 통해 입장할 수 있습니다. */
 	Public UMETA(DisplayName = "Public"),
 
-	/** 호스트의 Steam 친구이거나 올바른 비밀번호를 제출한 사용자만 입장할 수 있습니다. */
-	FriendsOrPassword UMETA(DisplayName = "Friends Or Password")
+	/** 올바른 비밀번호를 제출한 사용자만 입장할 수 있습니다. */
+	PasswordOnly UMETA(DisplayName = "Password Only")
 };
