@@ -10,22 +10,26 @@
 
 void UPDMainMenuRootWidget::PushScreen(const EPDMainMenuScreen Screen)
 {
-	const TSubclassOf<UPDMainMenuScreenBase>* ScreenClass = ScreenClasses.Find(Screen);
+	const TSubclassOf<UPDActivatableWidget>* ScreenClass = ScreenClasses.Find(Screen);
 	if (!ScreenClass || !*ScreenClass)
 	{
 		UE_LOG(LogPDUI, Warning, TEXT("Main menu screen %s is not registered in ScreenClasses."), *UEnum::GetValueAsString(Screen));
 		return;
 	}
 
-	Stack_Screens->AddWidget<UPDMainMenuScreenBase>(*ScreenClass, [this](UPDMainMenuScreenBase& ScreenWidget)
+	Stack_Screens->AddWidget<UPDActivatableWidget>(*ScreenClass, [this](UPDActivatableWidget& ScreenWidget)
 	{
-		ScreenWidget.SetMenuRoot(this);
+		// 옵션 창처럼 메뉴 루트를 모르는 화면은 스스로 닫히기만 한다.
+		if (UPDMainMenuScreenBase* MenuScreen = Cast<UPDMainMenuScreenBase>(&ScreenWidget))
+		{
+			MenuScreen->SetMenuRoot(this);
+		}
 	});
 }
 
 bool UPDMainMenuRootWidget::HasScreen(const EPDMainMenuScreen Screen) const
 {
-	const TSubclassOf<UPDMainMenuScreenBase>* ScreenClass = ScreenClasses.Find(Screen);
+	const TSubclassOf<UPDActivatableWidget>* ScreenClass = ScreenClasses.Find(Screen);
 	return ScreenClass && *ScreenClass;
 }
 
