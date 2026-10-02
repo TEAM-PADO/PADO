@@ -23,6 +23,11 @@ UPDGA_ActionRuntimeBase::UPDGA_ActionRuntimeBase()
 	AssetTags.AddTag(TAG_PD_Ability_Action);
 	SetAssetTags(AssetTags);
 
+	// 손을 쓸 수 없으면 새 Action을 시작하지 않는다. 그 전에 쏜 발까지 무효로
+	// 만들지 않도록 Block 태그가 아니라 활성화 조건으로 둔다. Fire Action은
+	// 활성화 조건을 보지 않으므로 무기를 든 동안의 활성 상태가 유지된다.
+	ActivationBlockedTags.AddTag(TAG_PD_State_HandsBlocked);
+
 	AddSupportedActionHook(TAG_PD_ActionHook_OnStart);
 	AddSupportedActionHook(TAG_PD_ActionHook_OnExecuteStart);
 	AddSupportedActionHook(TAG_PD_ActionHook_OnExecute);
@@ -421,9 +426,11 @@ void UPDGA_ActionRuntimeBase::StartLoopingCue()
 	UObject* SourceObject = GetCurrentSourceObject();
 	AActor* EffectCauser = IsValid(SourceItem) ? SourceItem : AvatarActor;
 
+	// Instigator는 논리적 주체(ASC 소유자), EffectCauser는 물리적 원인(아이템)이다.
+	// Cue 파라미터의 Instigator는 연출 기준이라 아바타로 둔다.
 	FGameplayEffectContextHandle EffectContext =
 		AbilitySystem->MakeEffectContext();
-	EffectContext.AddInstigator(AvatarActor, EffectCauser);
+	EffectContext.AddInstigator(AbilitySystem->GetOwnerActor(), EffectCauser);
 	if (SourceObject)
 	{
 		EffectContext.AddSourceObject(SourceObject);

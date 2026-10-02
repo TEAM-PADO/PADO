@@ -50,6 +50,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "PD|Movement")
 	float GetAttributeMoveSpeed() const { return AttributeMoveSpeed; }
 
+	/**
+	 * 걷다가 부딪힌 물리 대상을 몸으로 밀 수 있는지 본다. 탈것은 밀지 않는다.
+	 * 엔진의 미는 힘은 질량에 비례하지 않아 무거운 차도 계속 밀면 굴러가고,
+	 * 몸을 먼저 움직이는 클라이언트만 차를 밀어 서버와 어긋난다.
+	 */
+	static bool CanPushImpactedActor(const AActor* ImpactedActor);
+
 	UPROPERTY(
 		EditDefaultsOnly,
 		BlueprintReadOnly,
@@ -72,6 +79,11 @@ public:
 	float AimingSpeedMultiplier = 0.5f;
 
 protected:
+	virtual void ApplyImpactPhysicsForces(
+		const FHitResult& Impact,
+		const FVector& ImpactAcceleration,
+		const FVector& ImpactVelocity) override;
+
 	/** 어트리뷰트를 아직 못 읽었을 때 쓰는 값이다. */
 	UPROPERTY(
 		EditDefaultsOnly,

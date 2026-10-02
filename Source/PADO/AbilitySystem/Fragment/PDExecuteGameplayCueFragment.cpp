@@ -163,9 +163,13 @@ bool UPDExecuteGameplayCueFragment::Execute(
 		CueHitResult.ImpactPoint = ItemSocketLocation;
 	}
 
+	// Instigator는 논리적 주체(ASC 소유자)다. 연출 기준인 Cue 파라미터의
+	// Instigator는 아래에서 Source Actor로 따로 둔다.
 	FGameplayEffectContextHandle EffectContext =
 		Context.SourceAbilitySystem->MakeEffectContext();
-	EffectContext.AddInstigator(Context.SourceActor, EffectCauser);
+	EffectContext.AddInstigator(
+		Context.SourceAbilitySystem->GetOwnerActor(),
+		EffectCauser);
 	if (SourceObject)
 	{
 		EffectContext.AddSourceObject(SourceObject);

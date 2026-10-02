@@ -7,15 +7,15 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
-#include "Engine/OverlapResult.h"
-#include "PADO/AbilitySystem/Attribute/PDMovementAttributeSet.h"
 #include "PADO/Character/PDCharacterMovementComponent.h"
+#include "PADO/Character/PDPlayerState.h"
 #include "PADO/Character/PDRecoilComponent.h"
 #include "Engine/World.h"
-#include "PADO/AbilitySystem/Component/PDAbilitySystemComponent.h"
-#include "PADO/AbilitySystem/Component/PDKnockbackComponent.h"
 #include "PADO/Item/Component/PDHeldItemComponent.h"
-#include "PADO/Item/PDWorldItemActor.h"
+#include "PADO/Interaction/Component/PDInteractionComponent.h"
+#include "PADO/Vehicle/Component/PDVehicleOccupantComponent.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogPDPlayerCharacter, Log, All);
 
 namespace PDCharacterDefaults
 {
@@ -44,8 +44,7 @@ namespace PDCharacterDefaults
 
 APDPlayerCharacter::APDPlayerCharacter(
 	const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer.SetDefaultSubobjectClass<UPDCharacterMovementComponent>(
-		ACharacter::CharacterMovementComponentName))
+	: Super(ObjectInitializer)
 {
 	GetCapsuleComponent()->InitCapsuleSize(PDCharacterDefaults::CapsuleRadius, PDCharacterDefaults::CapsuleHalfHeight);
 
@@ -88,31 +87,8 @@ APDPlayerCharacter::APDPlayerCharacter(
 	FollowCamera->bUsePawnControlRotation = false;
 	FollowCamera->SetFieldOfView(IdleCameraPose.FieldOfView);
 
-	AbilitySystemComponent =
-		CreateDefaultSubobject<UPDAbilitySystemComponent>(TEXT("AbilitySystem"));
-	AbilitySystemComponent->SetIsReplicated(true);
-	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
-
-	MovementAttributes =
-		CreateDefaultSubobject<UPDMovementAttributeSet>(TEXT("MovementAttributes"));
-
-	HeldItemComponent =
-		CreateDefaultSubobject<UPDHeldItemComponent>(TEXT("HeldItem"));
-	KnockbackComponent =
-		CreateDefaultSubobject<UPDKnockbackComponent>(TEXT("Knockback"));
 	RecoilComponent =
 		CreateDefaultSubobject<UPDRecoilComponent>(TEXT("Recoil"));
-}
-
-UAbilitySystemComponent* APDPlayerCharacter::GetAbilitySystemComponent() const
-{
-	return AbilitySystemComponent;
-}
-
-void APDPlayerCharacter::BeginPlay()
-{
-	Super::BeginPlay();
-	InitializeAbilityActorInfo();
 }
 
 void APDPlayerCharacter::Tick(float DeltaSeconds)
@@ -140,73 +116,57 @@ void APDPlayerCharacter::Tick(float DeltaSeconds)
 void APDPlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
-	InitializeAbilityActorInfo();
+	InitializePlayerAbilitySystem();
+}
+
+void APDPlayerCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+	InitializePlayerAbilitySystem();
 }
 
 void APDPlayerCharacter::OnRep_Controller()
 {
 	Super::OnRep_Controller();
-	InitializeAbilityActorInfo();
+	InitializePlayerAbilitySystem();
 }
 
 void APDPlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
-	InitializeAbilityActorInfo();
+	InitializePlayerAbilitySystem();
 }
 
-void APDPlayerCharacter::InitializeAbilityActorInfo()
+void APDPlayerCharacter::InitializePlayerAbilitySystem()
 {
-	if (!AbilitySystemComponent)
+	APlayerState* CurrentPlayerState = GetPlayerState();
+	if (!CurrentPlayerState)
 	{
+		// 아직 도착하지 않은 경계다. 다음 경계에서 다시 시도한다.
 		return;
 	}
 
-	AbilitySystemComponent->InitAbilityActorInfo(this, this);
-
-	// ASC는 InitializeComponent에서 소유자의 AttributeSet을 자동 수집하지만,
-	// 그건 Outer가 같은 Actor일 때만이고 실행 시점도 액터 초기화에 묶여 있다.
-	// 나중에 ASC를 PlayerState로 옮기면 자동 수집이 닿지 않으므로 직접 등록한다.
-	// AddSpawnedAttribute는 AddUnique라 여러 번 불려도 안전하다.
-	if (MovementAttributes)
+	APDPlayerState* PDPlayerState = Cast<APDPlayerState>(CurrentPlayerState);
+	if (!PDPlayerState)
 	{
-		AbilitySystemComponent->AddSpawnedAttribute(MovementAttributes);
+		// GameMode의 PlayerState 클래스가 다르면 ASC가 없다. 이 캐릭터의
+		// Ability는 기존 null 경로로 실행되지 않는다.
+		if (!bWarnedUnexpectedPlayerState)
+		{
+			UE_LOG(
+				LogPDPlayerCharacter,
+				Warning,
+				TEXT("%s: PlayerState %s는 APDPlayerState가 아니라서 Ability System을 연결하지 못했다. GameMode의 PlayerStateClass를 확인한다."),
+				*GetNameSafe(this),
+				*GetNameSafe(CurrentPlayerState));
+			bWarnedUnexpectedPlayerState = true;
+		}
+		return;
 	}
 
-	// 이 함수는 BeginPlay/Possess/OnRep/Restart 경계마다 불린다. 중복 등록을 막는다.
-	if (!bMoveSpeedDelegateBound)
-	{
-		AbilitySystemComponent
-			->GetGameplayAttributeValueChangeDelegate(
-				UPDMovementAttributeSet::GetMoveSpeedAttribute())
-			.AddUObject(this, &APDPlayerCharacter::HandleMoveSpeedChanged);
-		bMoveSpeedDelegateBound = true;
-	}
-
-	PushMoveSpeedToMovement();
-}
-
-UPDCharacterMovementComponent* APDPlayerCharacter::GetPDCharacterMovement() const
-{
-	return Cast<UPDCharacterMovementComponent>(GetCharacterMovement());
-}
-
-void APDPlayerCharacter::PushMoveSpeedToMovement()
-{
-	UPDCharacterMovementComponent* Movement = GetPDCharacterMovement();
-	if (Movement && MovementAttributes)
-	{
-		Movement->SetAttributeMoveSpeed(MovementAttributes->GetMoveSpeed());
-	}
-}
-
-void APDPlayerCharacter::HandleMoveSpeedChanged(
-	const FOnAttributeChangeData& ChangeData)
-{
-	if (UPDCharacterMovementComponent* Movement = GetPDCharacterMovement())
-	{
-		Movement->SetAttributeMoveSpeed(ChangeData.NewValue);
-	}
+	InitializeAbilitySystem(
+		PDPlayerState->GetPDAbilitySystemComponent(),
+		PDPlayerState);
 }
 
 void APDPlayerCharacter::Move(const FVector2D& MovementInput)
@@ -267,112 +227,27 @@ void APDPlayerCharacter::StopSprinting_Implementation()
 
 void APDPlayerCharacter::Interact_Implementation()
 {
-	// 한 번에 하나만 들 수 있다. 교체하려면 먼저 내려놓는다.
-	if (!HeldItemComponent || HeldItemComponent->HasHeldItem())
+	// 탈것에 타고 있으면 상호작용 입력은 하차다.
+	UPDVehicleOccupantComponent* Occupant = GetVehicleOccupantComponent();
+	if (Occupant && Occupant->IsSeated())
 	{
+		Occupant->RequestExit();
 		return;
 	}
 
-	if (APDWorldItemActor* Target = FindInteractTarget())
+	// 무엇을 할지는 대상이 정한다. 아이템을 이미 들고 있으면 아이템이 거부한다.
+	if (UPDInteractionComponent* Interaction = GetInteractionComponent())
 	{
-		HeldItemComponent->RequestPickUp(Target);
+		Interaction->TryInteract();
 	}
 }
 
 void APDPlayerCharacter::DropHeldItem()
 {
-	if (HeldItemComponent)
+	if (UPDHeldItemComponent* HeldItems = GetHeldItemComponent())
 	{
-		HeldItemComponent->TryDropHeldItem();
+		HeldItems->TryDropHeldItem();
 	}
-}
-
-APDWorldItemActor* APDPlayerCharacter::FindInteractTarget() const
-{
-	const UWorld* World = GetWorld();
-	if (!World || !FollowCamera || !HeldItemComponent)
-	{
-		return nullptr;
-	}
-
-	const FVector TraceStart = FollowCamera->GetComponentLocation();
-	const FVector TraceEnd =
-		TraceStart + FollowCamera->GetForwardVector() * InteractTraceDistance;
-
-	FCollisionQueryParams QueryParams(TEXT("PDInteractTrace"), false, this);
-	TArray<FHitResult> Hits;
-	World->SweepMultiByChannel(
-		Hits,
-		TraceStart,
-		TraceEnd,
-		FQuat::Identity,
-		ECC_Visibility,
-		FCollisionShape::MakeSphere(InteractTraceRadius),
-		QueryParams);
-
-	// Sweep 결과는 시작점에서 가까운 순서다. 카메라가 캐릭터 뒤에 있으므로
-	// 먼저 걸리는 것이 곧 시선상 가장 앞의 후보다. CanPickUpItem이 캐릭터
-	// 기준 거리와 아이템 상태를 함께 거른다.
-	for (const FHitResult& Hit : Hits)
-	{
-		APDWorldItemActor* Item = Cast<APDWorldItemActor>(Hit.GetActor());
-		if (IsValid(Item) && HeldItemComponent->CanPickUpItem(Item))
-		{
-			return Item;
-		}
-	}
-
-	// 시선 Sweep만으로는 바닥에 놓인 아이템을 집을 수 없다. 카메라가 캐릭터
-	// 중심 높이에서 수평으로 나가는 동안 아이템은 그보다 한참 아래에 있어서
-	// 스쳐 지나간다. 드롭한 아이템을 다시 줍는 경우가 특히 그렇다.
-	// 그래서 시선에 걸린 것이 없으면 줍기 반경 안의 가장 가까운 후보를 고른다.
-	return FindNearestPickupCandidate();
-}
-
-APDWorldItemActor* APDPlayerCharacter::FindNearestPickupCandidate() const
-{
-	const UWorld* World = GetWorld();
-	if (!World || !HeldItemComponent)
-	{
-		return nullptr;
-	}
-
-	const float SearchRadius = HeldItemComponent->GetMaxPickupDistance();
-	if (SearchRadius <= 0.0f)
-	{
-		return nullptr;
-	}
-
-	FCollisionQueryParams QueryParams(TEXT("PDPickupOverlap"), false, this);
-	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByChannel(
-		Overlaps,
-		GetActorLocation(),
-		FQuat::Identity,
-		ECC_Visibility,
-		FCollisionShape::MakeSphere(SearchRadius),
-		QueryParams);
-
-	APDWorldItemActor* Nearest = nullptr;
-	double NearestDistanceSquared = TNumericLimits<double>::Max();
-	for (const FOverlapResult& Overlap : Overlaps)
-	{
-		APDWorldItemActor* Item = Cast<APDWorldItemActor>(Overlap.GetActor());
-		if (!IsValid(Item) || !HeldItemComponent->CanPickUpItem(Item))
-		{
-			continue;
-		}
-
-		const double DistanceSquared =
-			FVector::DistSquared(GetActorLocation(), Item->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
-		{
-			NearestDistanceSquared = DistanceSquared;
-			Nearest = Item;
-		}
-	}
-
-	return Nearest;
 }
 
 void APDPlayerCharacter::Attack_Implementation()
@@ -382,11 +257,12 @@ void APDPlayerCharacter::Attack_Implementation()
 
 bool APDPlayerCharacter::StartAttacking()
 {
-	if (HeldItemComponent && HeldItemComponent->HasHeldItem())
+	UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
+	if (HeldItems && HeldItems->HasHeldItem())
 	{
 		// 반동은 Held Item이 발사할 때마다 보내는 신호를 구독한다.
 		// 여기서 따로 치면 게이트가 두 벌이 되어 반드시 어긋난다.
-		return HeldItemComponent->PressHeldItemUse();
+		return HeldItems->PressHeldItemUse();
 	}
 
 	Attack();
@@ -395,15 +271,16 @@ bool APDPlayerCharacter::StartAttacking()
 
 void APDPlayerCharacter::StopAttacking()
 {
-	if (HeldItemComponent)
+	if (UPDHeldItemComponent* HeldItems = GetHeldItemComponent())
 	{
-		HeldItemComponent->ReleaseHeldItemUse();
+		HeldItems->ReleaseHeldItemUse();
 	}
 }
 
 bool APDPlayerCharacter::ReloadHeldItem()
 {
-	return HeldItemComponent && HeldItemComponent->TryReloadHeldItem();
+	UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
+	return HeldItems && HeldItems->TryReloadHeldItem();
 }
 
 void APDPlayerCharacter::StartShouldering()
@@ -455,8 +332,8 @@ EPDAimState APDPlayerCharacter::GetAimState() const
 
 bool APDPlayerCharacter::CanEnterAimState() const
 {
-	return !bRequireHeldItemToAim ||
-		(HeldItemComponent && HeldItemComponent->HasHeldItem());
+	const UPDHeldItemComponent* HeldItems = GetHeldItemComponent();
+	return !bRequireHeldItemToAim || (HeldItems && HeldItems->HasHeldItem());
 }
 
 const FPDAimCameraPose& APDPlayerCharacter::GetAimCameraPose(

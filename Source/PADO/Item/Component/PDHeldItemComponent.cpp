@@ -1,11 +1,14 @@
 #include "PADO/Item/Component/PDHeldItemComponent.h"
 
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
 #include "PADO/AbilitySystem/Ability/PDGA_Base.h"
 #include "PADO/AbilitySystem/Definition/PDSingleActionDefinition.h"
+#include "PADO/AbilitySystem/Tag/PDAbilityGameplayTags.h"
 #include "PADO/Item/Component/PDWeaponMagazineComponent.h"
 #include "PADO/Item/Definition/PDItemDefinition.h"
 #include "PADO/Item/Interface/PDReloadableItem.h"
@@ -39,7 +42,7 @@ bool UPDHeldItemComponent::ConfigureAttachment(
 void UPDHeldItemComponent::TryDropHeldItem()
 {
 	AActor* Holder = GetOwner();
-	if (!Holder)
+	if (!Holder || AreHandsBlocked())
 	{
 		return;
 	}
@@ -96,47 +99,13 @@ bool UPDHeldItemComponent::TryPickUp(APDWorldItemActor* Item)
 	return true;
 }
 
-bool UPDHeldItemComponent::RequestPickUp(APDWorldItemActor* Item)
-{
-	AActor* Holder = GetOwner();
-	if (!Holder || !IsValid(Item))
-	{
-		return false;
-	}
-
-	if (Holder->HasAuthority())
-	{
-		return TryPickUp(Item);
-	}
-
-	// 명백히 거부될 요청은 로컬에서 걸러 불필요한 RPC를 줄인다.
-	// 복제 지연으로 로컬 판단이 틀릴 수 있으므로 확정은 서버가 한다.
-	if (!CanPickUpItem(Item))
-	{
-		return false;
-	}
-
-	ServerPickUp(Item);
-	return true;
-}
-
-void UPDHeldItemComponent::ServerPickUp_Implementation(APDWorldItemActor* Item)
-{
-	// TryPickUp이 권한, 현재 보유 상태, 대상의 World 상태와 Definition,
-	// 거리, 손 소켓을 모두 서버 기준으로 다시 검증한다.
-	TryPickUp(Item);
-}
-
 bool UPDHeldItemComponent::CanPickUpItem(const APDWorldItemActor* Item) const
 {
-	const AActor* Holder = GetOwner();
-	return Holder &&
+	return GetOwner() &&
 		!IsValid(HeldItem) &&
 		IsValid(Item) &&
 		Item->CanBePickedUp() &&
-		MaxPickupDistance > 0.0f &&
-		FVector::DistSquared(Holder->GetActorLocation(), Item->GetActorLocation()) <=
-			FMath::Square(MaxPickupDistance);
+		!AreHandsBlocked();
 }
 
 bool UPDHeldItemComponent::DropHeldItem(
@@ -275,7 +244,7 @@ float UPDHeldItemComponent::ResolveAutomaticFireInterval(
 bool UPDHeldItemComponent::TryReloadHeldItem()
 {
 	AActor* Holder = GetOwner();
-	if (!Holder || !HasHeldItem())
+	if (!Holder || !HasHeldItem() || AreHandsBlocked())
 	{
 		return false;
 	}
@@ -300,6 +269,16 @@ bool UPDHeldItemComponent::TryReloadHeldItem()
 
 	ServerReloadHeldItem();
 	return true;
+}
+
+bool UPDHeldItemComponent::CancelHeldItemReload()
+{
+	const AActor* Holder = GetOwner();
+	APDWorldItemActor* Item = GetHeldItem();
+	UPDWeaponMagazineComponent* Magazine =
+		Item ? Item->GetMagazineComponent() : nullptr;
+	return Holder && Holder->HasAuthority() && Magazine &&
+		Magazine->CancelReload();
 }
 
 bool UPDHeldItemComponent::UseHeldItemWithTarget(AActor* TargetActor)
@@ -395,12 +374,15 @@ void UPDHeldItemComponent::OnRep_HeldItem()
 
 void UPDHeldItemComponent::ServerDropHeldItem_Implementation()
 {
-	DropHeldItemUsingSettings(FVector::ZeroVector);
+	if (!AreHandsBlocked())
+	{
+		DropHeldItemUsingSettings(FVector::ZeroVector);
+	}
 }
 
 void UPDHeldItemComponent::ServerReloadHeldItem_Implementation()
 {
-	if (!ReloadHeldItemAuthority())
+	if (AreHandsBlocked() || !ReloadHeldItemAuthority())
 	{
 		ClientRejectReload();
 	}
@@ -534,4 +516,12 @@ bool UPDHeldItemComponent::ReloadHeldItemAuthority()
 void UPDHeldItemComponent::BroadcastHeldItemChanged()
 {
 	OnHeldItemChanged.Broadcast(HeldItem);
+}
+
+bool UPDHeldItemComponent::AreHandsBlocked() const
+{
+	const UAbilitySystemComponent* AbilitySystem =
+		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
+	return AbilitySystem &&
+		AbilitySystem->HasMatchingGameplayTag(TAG_PD_State_HandsBlocked);
 }

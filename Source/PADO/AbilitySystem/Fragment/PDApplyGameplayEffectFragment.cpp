@@ -83,11 +83,13 @@ bool UPDApplyGameplayEffectFragment::PrepareDeferredExecution(
 		return false;
 	}
 
+	// Instigator는 논리적 주체(ASC 소유자)다. 발사 시점에 잡아 두므로 사수의
+	// 몸이 먼저 사라져도 투사체 폭발의 주체가 남는다.
 	FGameplayEffectContextHandle EffectContext =
 		SourceAbilitySystem->MakeEffectContext();
 	AActor* EffectCauser = GetTypedOuter<AActor>();
 	EffectContext.AddInstigator(
-		Context.SourceActor,
+		SourceAbilitySystem->GetOwnerActor(),
 		EffectCauser ? EffectCauser : Context.SourceActor);
 	EffectContext.AddSourceObject(
 		Context.EffectSourceObject ? Context.EffectSourceObject : this);

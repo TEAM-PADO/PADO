@@ -43,22 +43,17 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool DropHeldItemUsingSettings(FVector AdditionalImpulse);
 
+	/**
+	 * 서버에서 줍기를 확정한다. 보유 상태, 대상 상태, 손 소켓을 본다.
+	 * 입력에서 오는 줍기는 상호작용 경로를 거친다. 손 닿는 거리는 대상을 고른
+	 * 상호작용 컴포넌트가 판단하므로 여기서 재지 않는다.
+	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool TryPickUp(APDWorldItemActor* Item);
 
-	/**
-	 * 입력 계층에서 호출한다. 로컬이 고른 대상을 서버로 보내 줍기를 요청하고,
-	 * 서버가 권한·보유 상태·대상 상태·거리·손 소켓을 다시 검증해 확정한다.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "PD|Item")
-	bool RequestPickUp(APDWorldItemActor* Item);
-
+	/** 지금 이 아이템을 집을 수 있는 상태인지다. 한 번에 하나만 들고, 손을 쓸 수 없으면 집지 않는다. */
 	UFUNCTION(BlueprintPure, Category = "PD|Item")
 	bool CanPickUpItem(const APDWorldItemActor* Item) const;
-
-	/** 서버가 줍기를 허용하는 캐릭터 기준 최대 거리다. */
-	UFUNCTION(BlueprintPure, Category = "PD|Item|Pickup")
-	float GetMaxPickupDistance() const { return MaxPickupDistance; }
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool DropHeldItem(
@@ -90,6 +85,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "PD|Item")
 	bool TryReloadHeldItem();
+
+	/** 서버에서 현재 Held Item의 재장전을 취소한다. 진행 중이던 재장전이 있었으면 true다. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
+	bool CancelHeldItemReload();
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "PD|Item")
 	bool UseHeldItemWithTarget(AActor* TargetActor);
@@ -129,9 +128,6 @@ protected:
 		TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(Server, Reliable)
-	void ServerPickUp(APDWorldItemActor* Item);
-
-	UFUNCTION(Server, Reliable)
 	void ServerDropHeldItem();
 
 	UFUNCTION(Server, Reliable)
@@ -160,13 +156,6 @@ protected:
 	UPROPERTY(
 		EditAnywhere,
 		BlueprintReadOnly,
-		Category = "PD|Item|Pickup",
-		meta = (ClampMin = "0.0"))
-	float MaxPickupDistance = 250.0f;
-
-	UPROPERTY(
-		EditAnywhere,
-		BlueprintReadOnly,
 		Category = "PD|Item|Drop",
 		meta = (ClampMin = "0.0"))
 	float DropForwardDistance = 120.0f;
@@ -189,6 +178,12 @@ private:
 	bool ClearHeldItemForDestruction(APDWorldItemActor* Item);
 	bool ReloadHeldItemAuthority();
 	void BroadcastHeldItemChanged();
+
+	/**
+	 * Holder가 손을 쓸 수 없는 상태인가(State.HandsBlocked). 입력에서 온 재장전,
+	 * 드롭, 줍기를 거부한다. 탑승 직전에 보낸 요청이 앉은 뒤에 도착해도 손을 쓰지 않게 한다.
+	 */
+	bool AreHandsBlocked() const;
 
 	UPROPERTY(ReplicatedUsing = OnRep_HeldItem)
 	TObjectPtr<APDWorldItemActor> HeldItem;
